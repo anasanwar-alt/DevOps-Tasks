@@ -1,0 +1,7 @@
+Status: active
+
+     To                         Action      From
+     --                         ------      ----
+[ 1] 8080/tcp                   ALLOW IN    Anywhere                  
+[ 2] 8080/tcp (v6)              ALLOW IN    Anywhere (v6)             
+

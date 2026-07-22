@@ -1,0 +1,7 @@
+Status: active
+
+     To                         Action      From
+     --                         ------      ----
+[ 1] 8080/tcp                   DENY IN     Anywhere                  
+[ 2] 8080/tcp (v6)              DENY IN     Anywhere (v6)             
+

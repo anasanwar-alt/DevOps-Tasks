@@ -1,0 +1,8 @@
+Status: active
+
+     To                         Action      From
+     --                         ------      ----
+[ 1] 8080/tcp                   ALLOW IN    172.30.64.0/20            
+[ 2] 8080/tcp                   DENY IN     Anywhere                  
+[ 3] 8080/tcp (v6)              DENY IN     Anywhere (v6)             
+
