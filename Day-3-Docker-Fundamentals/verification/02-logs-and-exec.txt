@@ -1,0 +1,37 @@
+Build, run, logs, exec
+======================
+
+$ docker build -t day3-hello:single -f Dockerfile ./app
+  (full BuildKit output in 01-build-output.txt)
+
+$ docker run -d -p 3000:3000 --name day3-hello day3-hello:single
+  9a8c1e6fbcfd...   (same container shown in screenshots 07 and 08)
+
+$ docker ps
+CONTAINER ID   IMAGE               COMMAND                  CREATED          STATUS          PORTS                    NAMES
+9a8c1e6fbcfd   day3-hello:single   "docker-entrypoint.s…"   33 minutes ago   Up 33 minutes   0.0.0.0:3000->3000/tcp   day3-hello
+
+$ curl -s http://localhost:3000/
+Hello World from Docker — pid 1, host 9a8c1e6fbcfd
+
+$ docker logs day3-hello         # PID 1 stdout only
+2026-07-23T15:35:04.775Z GET /
+2026-07-23T15:35:04.818Z GET /favicon.ico
+2026-07-23T15:45:59.048Z GET /
+2026-07-23T15:45:59.093Z GET /health
+2026-07-23T15:45:59.463Z GET /
+
+$ docker exec day3-hello whoami          # USER node took effect
+node
+
+$ docker exec day3-hello node -v
+v22.23.1
+
+$ docker exec day3-hello sh -c 'cat /proc/1/comm'   # what is PID 1?
+node
+
+$ docker exec -it day3-hello bash        # alpine has no bash
+OCI runtime exec failed: exec: "bash": executable file not found in $PATH
+
+$ docker exec day3-hello sh -c "command -v sh"      # ...only sh (BusyBox)
+/bin/sh

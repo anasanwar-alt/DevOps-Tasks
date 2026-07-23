@@ -1,0 +1,11 @@
+Image size comparison
+=====================
+
+$ docker images --format "{{.Repository}}:{{.Tag}}\t{{.Size}}" | grep -E "node:22-alpine|day3-hello"
+node:22-alpine	163MB
+day3-hello:multi	163MB
+day3-hello:single	220MB
+
+# node:22-alpine  = the shared base of BOTH builds
+# day3-hello:single = single-stage (before)   220MB
+# day3-hello:multi  = multi-stage  (after)    163MB

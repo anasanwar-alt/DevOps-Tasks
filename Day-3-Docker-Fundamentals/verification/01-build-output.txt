@@ -1,0 +1,44 @@
+$ docker build -t day3-hello:single -f Dockerfile ./app
+
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 827B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/node:22-alpine
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 188B done
+#3 DONE 0.0s
+
+#4 [1/6] FROM docker.io/library/node:22-alpine
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 123B done
+#5 DONE 0.0s
+
+#6 [3/6] COPY package.json tsconfig.json ./
+#6 CACHED
+
+#7 [2/6] WORKDIR /app
+#7 CACHED
+
+#8 [5/6] COPY src ./src
+#8 CACHED
+
+#9 [4/6] RUN npm install
+#9 CACHED
+
+#10 [6/6] RUN npm run build
+#10 CACHED
+
+#11 exporting to image
+#11 exporting layers done
+#11 writing image sha256:1d78503d8c51df483dd2465ac263b9277966cee6972194257bac85c3b3050fed done
+#11 naming to docker.io/library/day3-hello:single done
+#11 DONE 0.0s
+
+View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/t4f490e9bc4x4vq89mcimadno

@@ -1,0 +1,42 @@
+docker history — per-layer sizes (Size | instruction)
+=====================================================
+
+$ docker history day3-hello:single --format "{{.Size}}\t{{.CreatedBy}}"
+# single-stage: the 57.5 MB 'npm install' layer ships in the final image
+0B        CMD ["node" "dist/server.js"]
+0B        USER node
+0B        EXPOSE map[3000/tcp:{}]
+0B        ENV PORT=3000
+4.68kB    RUN npm run build
+1.19kB    COPY src ./src
+57.5MB    RUN npm install
+619B      COPY package.json tsconfig.json ./
+0B        WORKDIR /app
+0B        CMD ["node"]
+0B        ENTRYPOINT ["docker-entrypoint.sh"]
+388B      COPY docker-entrypoint.sh /usr/local/bin/ # …
+5.36MB    RUN apk add --no-cache --virtual …
+0B        ENV YARN_VERSION=1.22.22
+149MB     RUN addgroup -g 1000 node     && …
+0B        ENV NODE_VERSION=22.23.1
+0B        CMD ["/bin/sh"]
+8.42MB    ADD alpine-minirootfs-3.24.1-x86_64.tar.gz /…
+
+$ docker history day3-hello:multi --format "{{.Size}}\t{{.CreatedBy}}"
+# multi-stage: toolchain stays in the discarded builder; only the
+#              1.23 kB compiled dist/ crosses into the final image
+0B        CMD ["node" "dist/server.js"]
+0B        USER node
+0B        EXPOSE map[3000/tcp:{}]
+0B        ENV PORT=3000
+1.23kB    COPY /app/dist ./dist
+0B        WORKDIR /app
+0B        CMD ["node"]
+0B        ENTRYPOINT ["docker-entrypoint.sh"]
+388B      COPY docker-entrypoint.sh /usr/local/bin/ # …
+5.36MB    RUN apk add --no-cache --virtual …
+0B        ENV YARN_VERSION=1.22.22
+149MB     RUN addgroup -g 1000 node     && …
+0B        ENV NODE_VERSION=22.23.1
+0B        CMD ["/bin/sh"]
+8.42MB    ADD alpine-minirootfs-3.24.1-x86_64.tar.gz /…

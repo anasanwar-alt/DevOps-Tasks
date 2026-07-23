@@ -1,0 +1,31 @@
+SIGTERM handling and 'docker stop' behaviour (PID 1)
+====================================================
+A container's PID 1 gets no default signal handlers. 'docker stop' sends
+SIGTERM, waits a 10s grace period, then SIGKILL.
+
+--- CASE A: PID 1 with NO SIGTERM handler ---
+$ docker run -d --name day3-nosig day3-hello:single node -e "setInterval(()=>{},1e9)"
+18b01cfe1337eb77da2e07cb168af4dcda0a756728a1f16396b7fe02a7f6799f
+
+$ time docker stop day3-nosig
+  real  10.49s          <- full ~10s grace period elapsed
+$ docker inspect day3-nosig --format '{{.State.ExitCode}}'
+  137                     <- 137 = 128 + 9  (killed by SIGKILL)
+
+--- CASE B: our server, WITH process.on('SIGTERM', ...) ---
+$ docker run -d --name day3-sig day3-hello:single
+a3178973898116a4b96c77608c6812b058714281f1d79fea635b53c21b6dc913
+
+$ time docker stop day3-sig
+  real  0.50s           <- exits immediately on SIGTERM
+$ docker inspect day3-sig --format '{{.State.ExitCode}}'
+  0                       <- clean shutdown via process.exit(0)
+$ docker logs day3-sig | tail -1
+SIGTERM received, shutting down gracefully
+
+Note: exit 0 is deliberate (the handler calls process.exit(0)). Had it let
+the process terminate by default, the code would be 143 (128 + 15, SIGTERM).
+
+$ docker rm -f day3-nosig day3-sig
+day3-nosig
+day3-sig
