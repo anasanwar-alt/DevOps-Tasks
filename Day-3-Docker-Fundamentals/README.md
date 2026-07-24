@@ -1,6 +1,6 @@
 # Training Day 3 — Docker Fundamentals
 
-> This submission covers the hands-on task: a minimal Node.js Hello World HTTP server, containerised, built, run, inspected, exec'd into, then converted to a multi-stage build with a measured size comparison. Every number and log excerpt below is real output, captured to `evidence/` during this session.
+> This submission covers the hands-on task: a minimal Node.js Hello World HTTP server, containerised, built, run, inspected, exec'd into, then converted to a multi-stage build with a measured size comparison. Every number and log excerpt below is real output, captured to `verification/` during this session.
 
 ---
 
@@ -44,7 +44,7 @@ CMD ["node", "dist/server.js"]
 
 ## 3. Build, run, logs, exec
 
-Built and run (`evidence/01-build-output.txt`, `evidence/02-logs-and-exec.txt`):
+Built and run (`verification/01-build-output.txt`, `verification/02-logs-and-exec.txt`):
 
 ```
 $ docker build -t day3-hello:single -f Dockerfile ./app
@@ -74,7 +74,7 @@ OCI runtime exec failed: exec: "bash": executable file not found in $PATH
 
 ### 3.1 PID 1, signals, and `docker stop`
 
-A container's PID 1 receives **no default signal handlers** from the kernel. The consequence (`evidence/03-sigterm-timing.txt`):
+A container's PID 1 receives **no default signal handlers** from the kernel. The consequence (`verification/03-sigterm-timing.txt`):
 
 ```
 --- CASE A: PID 1 with NO SIGTERM handler ---
@@ -131,7 +131,7 @@ A **multi-stage build** uses more than one `FROM`. Each begins a new stage with 
 
 ### 4.2 Measured sizes — before and after
 
-Both images ship from the **same** `node:22-alpine` base, so the only thing that differs is the build strategy. That makes the comparison a clean isolation of what multi-stage alone does (`evidence/04-image-size-table.txt`):
+Both images ship from the **same** `node:22-alpine` base, so the only thing that differs is the build strategy. That makes the comparison a clean isolation of what multi-stage alone does (`verification/04-image-size-table.txt`):
 
 | Image | Runtime base | Build strategy | Size |
 |---|---|---|---|
@@ -144,7 +144,7 @@ before  220 MB ──(multi-stage: discard tsc + dev deps + npm cache)──► 
                                                             220 MB → 163 MB  =  26% smaller
 ```
 
-Because the base is identical on both sides, `docker history` (`evidence/05-docker-history.txt`) shows the single difference between them:
+Because the base is identical on both sides, `docker history` (`verification/05-docker-history.txt`) shows the single difference between them:
 
 ```
 # day3-hello:single — the install layer multi-stage removes
@@ -173,14 +173,14 @@ From this exercise, multi-stage delivers:
 
 | File | Contents |
 |---|---|
-| `evidence/01-build-output.txt` | full BuildKit output of the single-stage build |
-| `evidence/02-logs-and-exec.txt` | `run`, `ps`, HTTP response, `logs`, `exec whoami/node -v`, no-bash |
-| `evidence/03-sigterm-timing.txt` | `docker stop` timing: 10.49 s/137 (no handler) vs 0.50 s/0 (handler) |
-| `evidence/04-image-size-table.txt` | the single-stage (220 MB) vs multi-stage (163 MB) comparison |
-| `evidence/05-docker-history.txt` | per-layer sizes; the 57.5 MB install layer vs the 1.23 kB dist copy |
-| `evidence/06-docker-desktop-images.png` | Docker Desktop → Images: `single` (220 MB, in use) and `multi` (163 MB) |
-| `evidence/07-docker-desktop-container.png` | Docker Desktop → Containers: the running container, `3000:3000`, Exec into `/app` |
-| `evidence/08-browser-hello.png` | browser at `localhost:3000` — the served response (`host 9a8c1e6fbcfd`) |
+| `verification/01-build-output.txt` | full BuildKit output of the single-stage build |
+| `verification/02-logs-and-exec.txt` | `run`, `ps`, HTTP response, `logs`, `exec whoami/node -v`, no-bash |
+| `verification/03-sigterm-timing.txt` | `docker stop` timing: 10.49 s/137 (no handler) vs 0.50 s/0 (handler) |
+| `verification/04-image-size-table.txt` | the single-stage (220 MB) vs multi-stage (163 MB) comparison |
+| `verification/05-docker-history.txt` | per-layer sizes; the 57.5 MB install layer vs the 1.23 kB dist copy |
+| `verification/06-docker-desktop-images.png` | Docker Desktop → Images: `single` (220 MB, in use) and `multi` (163 MB) |
+| `verification/07-docker-desktop-container.png` | Docker Desktop → Containers: the running container, `3000:3000`, Exec into `/app` |
+| `verification/08-browser-hello.png` | browser at `localhost:3000` — the served response (`host 9a8c1e6fbcfd`) |
 
 ---
 
