@@ -1,0 +1,55 @@
+name: day4
+
+services:
+  # ---- PostgreSQL database ----
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      # Named volume → the DB survives `compose down` and container recreation.
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready ships with the postgres image. $$ escapes compose interpolation
+      # so the shell inside the container expands its own env vars.
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # ---- Node app (Day 3's server, extended to read/write the DB) ----
+  app:
+    build: ./app
+    environment:
+      # No hard-coded connection details in the image — all injected here.
+      PGHOST: db          # resolves via compose's built-in DNS to the db service
+      PGPORT: "5432"
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB}
+      PORT: "3000"
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        # Start the app only once the DB reports healthy, not merely started.
+        condition: service_healthy
+    healthcheck:
+      # Node is guaranteed present (it's a node image); no curl/wget dependency.
+      test:
+        - "CMD"
+        - "node"
+        - "-e"
+        - "require('http').get('http://localhost:3000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  pgdata:

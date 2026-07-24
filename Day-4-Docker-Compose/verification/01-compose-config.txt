@@ -1,0 +1,67 @@
+The final configuration Docker Compose runs, after filling in the .env values.
+(passwords come from .env, so nothing sensitive is hard-coded in the yaml)
+
+$ docker compose config
+name: day4
+services:
+  app:
+    build:
+      context: D:\Projects\DevOps\Training Day 4\Assignment\app
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+        required: true
+    environment:
+      PGDATABASE: appdb
+      PGHOST: db
+      PGPASSWORD: appsecret
+      PGPORT: "5432"
+      PGUSER: appuser
+      PORT: "3000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - 'require(''http'').get(''http://localhost:3000/health'', r => process.exit(r.statusCode === 200 ? 0 : 1)).on(''error'', () => process.exit(1))'
+      timeout: 3s
+      interval: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 3000
+        published: "3000"
+        protocol: tcp
+    restart: unless-stopped
+  db:
+    environment:
+      POSTGRES_DB: appdb
+      POSTGRES_PASSWORD: appsecret
+      POSTGRES_USER: appuser
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB
+      timeout: 3s
+      interval: 5s
+      retries: 5
+      start_period: 5s
+    image: postgres:16-alpine
+    networks:
+      default: null
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: pgdata
+        target: /var/lib/postgresql/data
+        volume: {}
+networks:
+  default:
+    name: day4_default
+volumes:
+  pgdata:
+    name: day4_pgdata

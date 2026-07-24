@@ -1,0 +1,7 @@
+Each visit to the app saves a row to Postgres, then reads the new total back.
+The climbing count is the app writing to and reading from the database.
+
+$ curl http://localhost:3000/    (called 3 times)
+Hello from 642dc419d5eb — this app has recorded 5 visit(s) in Postgres
+Hello from 642dc419d5eb — this app has recorded 6 visit(s) in Postgres
+Hello from 642dc419d5eb — this app has recorded 7 visit(s) in Postgres

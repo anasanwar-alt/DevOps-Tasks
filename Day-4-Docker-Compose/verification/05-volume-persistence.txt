@@ -1,0 +1,35 @@
+A named volume keeps the database's data even when the containers are destroyed.
+
+Total BEFORE restart:
+Hello from 642dc419d5eb — this app has recorded 10 visit(s) in Postgres
+
+$ docker compose down     (removes both containers and the network; keeps the data volume)
+ Container day4-app-1  Stopping
+ Container day4-app-1  Stopped
+ Container day4-app-1  Removing
+ Container day4-app-1  Removed
+ Container day4-db-1  Stopping
+ Container day4-db-1  Stopped
+ Container day4-db-1  Removing
+ Container day4-db-1  Removed
+ Network day4_default  Removing
+ Network day4_default  Removed
+
+$ docker compose up -d    (recreate everything from scratch)
+ Network day4_default  Creating
+ Network day4_default  Created
+ Container day4-db-1  Creating
+ Container day4-db-1  Created
+ Container day4-app-1  Creating
+ Container day4-app-1  Created
+ Container day4-db-1  Starting
+ Container day4-db-1  Started
+ Container day4-db-1  Waiting
+ Container day4-db-1  Healthy
+ Container day4-app-1  Starting
+ Container day4-app-1  Started
+
+(waiting for the database and app to come back healthy...)
+
+Total AFTER a full restart -- it continues instead of resetting to 1, so the data survived:
+Hello from 0bf3e643e10c — this app has recorded 11 visit(s) in Postgres

@@ -1,0 +1,29 @@
+RESTART POLICY (restart: unless-stopped)
+========================================
+Docker restarts a container automatically when its main program exits on its own.
+It does NOT restart one you deliberately stop with 'docker stop' or 'docker kill' --
+those are treated as intentional, so the container stays down.
+
+Here we make the app exit on its own by sending it a 'please stop' signal (SIGTERM),
+which the app is programmed to handle. Docker then starts a fresh run by itself.
+
+Start time BEFORE:
+$ docker inspect day4-app-1 --format "{{.State.StartedAt}}"
+2026-07-24T12:23:28.086990157Z
+
+$ docker exec day4-app-1 kill -TERM 1      (tell the app process to stop)
+
+(waiting for Docker to start a fresh run...)
+
+Start time AFTER (later than before = Docker launched a new run for us):
+$ docker inspect day4-app-1 --format "{{.State.StartedAt}}"
+2026-07-24T12:23:41.546815346Z
+
+Status now -- healthy again, no manual action taken:
+$ docker compose ps app
+NAME         IMAGE      COMMAND                  SERVICE   CREATED          STATUS                    PORTS
+day4-app-1   day4-app   "docker-entrypoint.s…"   app       26 seconds ago   Up 10 seconds (healthy)   0.0.0.0:3000->3000/tcp
+
+The app started twice inside this one container (original run + the automatic restart):
+$ docker compose logs app | grep -c "listening on"
+2

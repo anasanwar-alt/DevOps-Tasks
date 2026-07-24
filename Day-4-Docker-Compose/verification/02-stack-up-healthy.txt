@@ -1,0 +1,12 @@
+Both services are running and report 'healthy' (their healthchecks pass).
+
+$ docker compose ps
+NAME         IMAGE                COMMAND                  SERVICE   CREATED          STATUS                    PORTS
+day4-app-1   day4-app             "docker-entrypoint.s…"   app       10 minutes ago   Up 10 minutes (healthy)   0.0.0.0:3000->3000/tcp
+day4-db-1    postgres:16-alpine   "docker-entrypoint.s…"   db        10 minutes ago   Up 10 minutes (healthy)   5432/tcp
+
+The app was set to start only AFTER the database became healthy.
+Proof: the app reached the database on its very first try (no retries):
+$ docker compose logs app | head -2
+db ready — schema ensured (attempt 1)
+listening on http://0.0.0.0:3000 (pid 1)

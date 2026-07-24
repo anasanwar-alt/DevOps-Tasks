@@ -1,0 +1,12 @@
+The rows the app saved, seen directly inside the Postgres database.
+Each row is one visit the app recorded.
+
+$ docker compose exec db psql -U appuser -d appdb -c "SELECT id, seen_at, host FROM visits ORDER BY id;"
+ id |            seen_at            |     host     
+----+-------------------------------+--------------
+  1 | 2026-07-24 12:00:57.986581+00 | 642dc419d5eb
+  2 | 2026-07-24 12:00:58.09267+00  | 642dc419d5eb
+  3 | 2026-07-24 12:00:58.189832+00 | 642dc419d5eb
+  4 | 2026-07-24 12:00:58.30201+00  | 642dc419d5eb
+(4 rows)
+
