@@ -1,0 +1,122 @@
+Day 5 - Local Docker registry: push / pull round-trip
+Captured: 2026-07-27 19:53:43 +0600
+Shell:    bash 5.1.16 on Ubuntu 22.04.5 LTS
+Every command is shown as `$ <command>` above its output.
+
+==============================================================================
+  0. Start a FRESH registry, so this proves the push and not leftover state
+==============================================================================
+
+$ docker rm -f registry
+registry
+
+$ docker run -d -p 5000:5000 --name registry --restart unless-stopped registry:2
+40418fa5e95090e8d763d95de401d2edae3843ff96dcf218b7b220389544ccc9
+
+$ curl -s http://localhost:5000/v2/_catalog
+{"repositories":[]}
+
+==============================================================================
+  1. Re-tag the Day 3 image for the local registry
+==============================================================================
+
+# The destination registry is encoded IN the image name - there is no
+# --registry flag on 'docker push'. Re-tagging is how you retarget.
+
+$ docker tag localhost:5000/day3-hello:multi day3-hello:multi
+
+$ docker images --filter reference='day3-hello' --filter reference='*/day3-hello'
+REPOSITORY                  TAG       IMAGE ID       CREATED      SIZE
+day3-hello                  multi     c9d21ea14523   4 days ago   163MB
+localhost:5000/day3-hello   multi     c9d21ea14523   4 days ago   163MB
+day3-hello                  single    1d78503d8c51   4 days ago   220MB
+
+# ^ Note the IMAGE ID column: both names point at ONE image. A tag is a
+#   pointer, not a copy - which is why 'docker tag' is instant.
+
+==============================================================================
+  2. Push to the local registry
+==============================================================================
+
+$ docker push localhost:5000/day3-hello:multi
+The push refers to repository [localhost:5000/day3-hello]
+070f3c0a0bde: Preparing
+63febd549226: Preparing
+dd812e67e586: Preparing
+fd246171abbe: Preparing
+94ba1b56d694: Preparing
+34884abbe928: Preparing
+34884abbe928: Waiting
+63febd549226: Pushed
+dd812e67e586: Pushed
+070f3c0a0bde: Pushed
+fd246171abbe: Pushed
+34884abbe928: Pushed
+94ba1b56d694: Pushed
+multi: digest: sha256:421f228b05767b0e07af020589c95af4ea48a0d455e05908eb63d7ba4d15b664 size: 1571
+
+==============================================================================
+  3. Ask the registry what it now holds (its plain HTTP API)
+==============================================================================
+
+$ curl -s http://localhost:5000/v2/_catalog
+{"repositories":["day3-hello"]}
+
+$ curl -s http://localhost:5000/v2/day3-hello/tags/list
+{"name":"day3-hello","tags":["multi"]}
+
+# ^ The repository is 'day3-hello', NOT 'localhost:5000/day3-hello'. The
+#   host part was routing info; the registry already knows it is itself.
+
+==============================================================================
+  4. Record the digest, then destroy every local copy
+==============================================================================
+
+$ docker image inspect --format '{{.Id}}' localhost:5000/day3-hello:multi
+sha256:c9d21ea1452364dabb94a46df00d2199216b5f629ad57c74370b423e35572581
+
+# Both tags must go. Docker only evicts the image when the LAST pointer
+# to it disappears - removing one tag would leave the image on disk and
+# make the pull below a silent no-op, faking the proof.
+
+$ docker rmi day3-hello:multi localhost:5000/day3-hello:multi
+Untagged: day3-hello:multi
+Untagged: localhost:5000/day3-hello:multi
+Untagged: localhost:5000/day3-hello@sha256:421f228b05767b0e07af020589c95af4ea48a0d455e05908eb63d7ba4d15b664
+Deleted: sha256:c9d21ea1452364dabb94a46df00d2199216b5f629ad57c74370b423e35572581
+
+$ docker images --filter reference='day3-hello' --filter reference='*/day3-hello'
+REPOSITORY   TAG       IMAGE ID       CREATED      SIZE
+day3-hello   single    1d78503d8c51   4 days ago   220MB
+
+# ^ Only day3-hello:single remains - a DIFFERENT image, untouched.
+
+==============================================================================
+  5. Pull it back from the local registry
+==============================================================================
+
+$ docker pull localhost:5000/day3-hello:multi
+multi: Pulling from day3-hello
+55afa1ecc21d: Already exists
+3f4c164634d2: Already exists
+1d4d101ceaad: Already exists
+d10ff586f6bd: Already exists
+74181f9b55da: Already exists
+941f1d13ff06: Already exists
+Digest: sha256:421f228b05767b0e07af020589c95af4ea48a0d455e05908eb63d7ba4d15b664
+Status: Downloaded newer image for localhost:5000/day3-hello:multi
+localhost:5000/day3-hello:multi
+
+# Note: layers say 'Already exists' because other images here share the
+# same node:22-alpine base, so those blobs were still on disk. The image
+# itself WAS deleted (section 4); the registry supplied what rebuilt it.
+
+==============================================================================
+  6. Digest AFTER the pull - must equal the digest from section 4
+==============================================================================
+
+$ docker image inspect --format '{{.Id}}' localhost:5000/day3-hello:multi
+sha256:c9d21ea1452364dabb94a46df00d2199216b5f629ad57c74370b423e35572581
+
+# Identical digest = content-addressing proved. The registry returned the
+# exact bytes that were pushed, not merely 'a similar image'.

@@ -1,0 +1,11 @@
+{
+  // Same compiler settings as the production build, but WITH the test files and
+  // a separate output directory. Keeping two configs is what lets `npm test`
+  // type-check the tests while `npm run build` ships an image containing none.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist-test"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": []
+}

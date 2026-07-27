@@ -1,0 +1,218 @@
+# =============================================================================
+# Day 5 — CI/CD pipeline: lint → test → build → push → deploy
+#
+# STATUS: written but NEVER EXECUTED. See WRITEUP.md §7. Treat every claim in
+# these comments about runtime behaviour as untested intent, not observed fact.
+#
+# VOCABULARY (GitHub Actions):
+#   workflow — this whole file. Lives in .github/workflows/ at the REPO ROOT.
+#   event    — what triggers it (`on:`).
+#   job      — a unit that gets its own fresh machine. Jobs run in PARALLEL
+#              unless `needs:` forces an order.
+#   step     — one command (`run:`) or one reusable action (`uses:`) inside a
+#              job. Steps in a job share a filesystem; jobs do NOT.
+#   runner   — the machine executing a job. `act` fakes this locally with a
+#              Docker container instead of a GitHub-hosted VM.
+# =============================================================================
+
+name: CI
+
+# --- TRIGGER -----------------------------------------------------------------
+# This is what makes it a pipeline rather than a script: nobody runs it by hand.
+# Every push to any branch fires the whole thing. `workflow_dispatch` adds a
+# manual "Run workflow" button on GitHub, and is also what `act workflow_dispatch`
+# targets locally.
+on:
+  push:
+  workflow_dispatch:
+
+# Shared by every job below. Change the registry once, here.
+env:
+  REGISTRY: localhost:5000
+  IMAGE_NAME: day5-app
+  APP_DIR: app
+
+jobs:
+  # ===========================================================================
+  # STAGE 1 — LINT
+  #
+  # Cheapest check first. It needs no Docker build, so a style error fails in
+  # seconds rather than after a three-minute image build. "Fail fast, fail
+  # cheap" is the ordering rule for every pipeline you will write.
+  # ===========================================================================
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      # `uses:` pulls in a reusable action from another repo — here, the official
+      # one that clones your code onto the runner. Without it the runner is
+      # empty. Pinned to a major version tag (@v4).
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # `npm ci`, NOT `npm install`. It installs package-lock.json verbatim and
+      # fails loudly if the lock has drifted from package.json. `npm install`
+      # would silently resolve newer transitive versions, so a dependency
+      # released this morning could turn the build red with no code change.
+      - name: Install dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: npm ci
+
+      # A non-zero exit code fails the step, which fails the job, which stops
+      # every job that `needs:` it. That is the entire gating mechanism —
+      # there is no special "fail the build" syntax.
+      - name: ESLint
+        working-directory: ${{ env.APP_DIR }}
+        run: npm run lint
+
+  # ===========================================================================
+  # STAGE 2 — TEST
+  #
+  # `needs: lint` makes this wait for lint to pass. That dependency is what
+  # turns a flat list of jobs into a DAG; without it, GitHub runs both at once.
+  #
+  # Note this job repeats checkout + setup-node + npm ci. That is not
+  # duplication to factor out: each job gets a FRESH machine and inherits
+  # nothing from the previous one.
+  # ===========================================================================
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: npm ci
+
+      # Type-checks the tests (tsc -p tsconfig.test.json) then runs them on
+      # Node 22's built-in runner. The glob must stay quoted: unquoted, bash
+      # expands ** as a single-level * and silently misses nested tests.
+      - name: Unit tests
+        working-directory: ${{ env.APP_DIR }}
+        run: npm test
+
+  # ===========================================================================
+  # STAGE 3 + 4 — BUILD and PUSH
+  #
+  # Two STEPS in one JOB, deliberately. A separate "push" job would start on a
+  # fresh machine with no image to push — jobs share nothing but explicitly
+  # declared artifacts. The build output is handed to the next stage through
+  # the REGISTRY, which is exactly what a registry is for.
+  # ===========================================================================
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tagging by commit SHA is the point of tagging in CI: it names the exact
+      # source revision an image was built from, so a running container can
+      # always be traced back to a commit. `latest` is a moving convenience
+      # pointer layered on top — never deploy by `latest` alone.
+      - name: Compute image tags
+        id: tags
+        run: |
+          SHA_TAG="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          echo "sha_tag=${SHA_TAG}"              >> "$GITHUB_OUTPUT"
+          echo "image=${REGISTRY}/${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "Building ${REGISTRY}/${IMAGE_NAME}:${SHA_TAG}"
+
+      # Two -t flags = two tags on ONE build. Tagging is free (a tag is a
+      # pointer), so there is no second build here.
+      - name: Build image
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          docker build \
+            -t "${{ steps.tags.outputs.image }}:${{ steps.tags.outputs.sha_tag }}" \
+            -t "${{ steps.tags.outputs.image }}:latest" \
+            .
+
+      # NOTE — THE UNTESTED PART. A step runs inside a container, so
+      # `localhost:5000` here is the JOB CONTAINER's loopback, not the host's,
+      # and the registry is not on it.
+      #
+      # Under `act` this may still work: the docker CLI in the job container
+      # talks to the HOST's daemon through a mounted socket, and it is the
+      # DAEMON that performs the push — so the hostname is resolved host-side,
+      # where localhost:5000 is the published registry port.
+      #
+      # If it fails, the fix is host.docker.internal:5000 PLUS an
+      # "insecure-registries": ["host.docker.internal:5000"] entry in the Docker
+      # daemon config — because Docker only permits plain HTTP for localhost
+      # and 127.0.0.1. This is a hypothesis; it has not been run.
+      - name: Push image to the local registry
+        run: |
+          docker push "${{ steps.tags.outputs.image }}:${{ steps.tags.outputs.sha_tag }}"
+          docker push "${{ steps.tags.outputs.image }}:latest"
+
+      - name: Verify it landed (registry HTTP API)
+        run: |
+          curl -sf "http://${REGISTRY}/v2/_catalog"; echo
+          curl -sf "http://${REGISTRY}/v2/${IMAGE_NAME}/tags/list"; echo
+
+    # Values published for downstream jobs to consume via `needs.<job>.outputs`.
+    # This is the only way one job hands data to another.
+    outputs:
+      sha_tag: ${{ steps.tags.outputs.sha_tag }}
+      image: ${{ steps.tags.outputs.image }}
+
+  # ===========================================================================
+  # STAGE 5 — DEPLOY
+  #
+  # Note what this job does NOT do: it never builds. It pulls the exact artifact
+  # the previous stage published and runs that. Deploying a rebuild would mean
+  # shipping bytes nobody tested — this is the core CD discipline.
+  # ===========================================================================
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_REF: ${{ needs.build-and-push.outputs.image }}:${{ needs.build-and-push.outputs.sha_tag }}
+      CONTAINER: day5-deployed
+    steps:
+      # Pulled by digest-backed tag, not rebuilt. This is the deployment.
+      - name: Pull the published image
+        run: docker pull "$IMAGE_REF"
+
+      # Idempotent: remove any previous instance first, or the second pipeline
+      # run dies on a container-name collision.
+      - name: Replace the running container
+        run: |
+          docker rm -f "$CONTAINER" 2>/dev/null || true
+          docker run -d --name "$CONTAINER" -p 3001:3000 "$IMAGE_REF"
+
+      # Smoke test from INSIDE the container. `docker exec` runs in the
+      # container's own network namespace, so localhost:3000 is the app itself —
+      # this sidesteps the whole question of which host the published port
+      # landed on. Uses `node` because node:22-alpine ships no curl or wget.
+      #
+      # A deploy that is not verified is not a deploy; it is a hope.
+      - name: Smoke test /health
+        run: |
+          for i in $(seq 1 10); do
+            if docker exec "$CONTAINER" node -e "
+              require('http').get('http://localhost:3000/health', r => {
+                let b=''; r.on('data', d => b += d);
+                r.on('end', () => { console.log('health:', r.statusCode, b.trim());
+                                    process.exit(r.statusCode === 200 ? 0 : 1); });
+              }).on('error', e => { console.error(e.message); process.exit(1); });
+            "; then
+              echo "smoke test passed on attempt $i"
+              exit 0
+            fi
+            echo "not ready yet (attempt $i) — retrying"
+            sleep 2
+          done
+          echo "app never became healthy"
+          docker logs "$CONTAINER"
+          exit 1
+
+      - name: Show what is running
+        run: docker ps --filter "name=$CONTAINER" --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'

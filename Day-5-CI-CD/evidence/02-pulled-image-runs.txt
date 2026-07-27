@@ -1,0 +1,28 @@
+Day 5 - The image recovered from the registry actually runs
+Captured: 2026-07-27 19:53:52 +0600
+Shell:    bash 5.1.16 on Ubuntu 22.04.5 LTS
+Every command is shown as `$ <command>` above its output.
+
+==============================================================================
+  Run the pulled image and serve a request
+==============================================================================
+
+$ docker run -d --rm -p 3000:3000 --name day3-check localhost:5000/day3-hello:multi
+088bad786dd847c9fa96927f4f279937674653373a340d75351cdd52dae5daf8
+
+$ docker ps --filter name=day3-check --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+NAMES        IMAGE                             STATUS         PORTS
+day3-check   localhost:5000/day3-hello:multi   Up 2 seconds   0.0.0.0:3000->3000/tcp
+
+$ curl -s http://localhost:3000/
+Hello World from Docker — pid 1, host 088bad786dd8
+
+$ docker logs day3-check
+listening on http://0.0.0.0:3000 (pid 1)
+2026-07-27T13:53:55.322Z GET /
+
+$ docker stop day3-check
+day3-check
+
+# This image was PULLED from localhost:5000 (see 01-registry-roundtrip.txt),
+# not built locally - so the round-trip preserved a working image.

@@ -1,0 +1,21 @@
+{
+  "name": "day5-app",
+  "version": "1.0.0",
+  "description": "Day 5 — Day 3's app, now driven through a lint/test/build/push/deploy pipeline",
+  "private": true,
+  "main": "dist/server.js",
+  "scripts": {
+    "lint": "eslint .",
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/**/*.test.js\"",
+    "start": "node dist/server.js"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.13.0",
+    "@types/node": "22.7.5",
+    "eslint": "9.13.0",
+    "globals": "15.11.0",
+    "typescript": "5.6.3",
+    "typescript-eslint": "8.11.0"
+  }
+}
