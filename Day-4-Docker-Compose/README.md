@@ -249,8 +249,9 @@ Getting this demonstration right surfaced two genuine gotchas:
 5. **The database publishes no host port** — only the app (on the project's private network) can
    reach it. Smaller attack surface.
 6. **Alpine has no `curl`/`wget` guaranteed** — the app healthcheck uses `node` instead.
-7. **Secrets in `.env`** are fine for a lab but should be git-ignored and injected from a secrets
-   manager in a real project.
+7. **Secrets in `.env`** are fine for a lab but must be kept out of version control. `.env` is
+   git-ignored; `.env.example` is committed in its place so the stack stays reproducible
+   (`cp .env.example .env`). A real project would inject these from a secrets manager.
 8. **The app hard-codes no connection details** — everything comes from environment variables, so
    the same image runs against any database.
 

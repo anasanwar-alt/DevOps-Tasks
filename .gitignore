@@ -1,0 +1,20 @@
+# ---- Secrets ----
+# Compose reads .env automatically and substitutes ${...} into docker-compose.yml.
+# It holds DB credentials, so it must never be committed. Commit .env.example
+# instead: same keys, placeholder values, so the stack stays reproducible.
+.env
+.env.*
+!.env.example
+
+# ---- Node ----
+node_modules/
+dist/
+npm-debug.log*
+yarn-error.log*
+*.tsbuildinfo
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
