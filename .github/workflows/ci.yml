@@ -41,10 +41,43 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
 
+    # A `service` is a container the runner starts BEFORE any step and removes
+    # after the job. It is how a pipeline gets a database, cache or queue to test
+    # against — and here, a registry to push to.
+    #
+    # This is what lets the job work on a GitHub-hosted runner, where
+    # `localhost:5000` would otherwise be a fresh VM with nothing listening.
+    #
+    # This registry is EPHEMERAL. It is created and
+    # destroyed with the job, so it proves the pipeline works — it is not
+    # durable artifact storage. A real pipeline pushes to a registry that
+    # outlives the run (GHCR, ECR, Harbor...).
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+
     steps:
       # `uses:` pulls in a reusable action from another repo — here, the official
       # one that puts your code on the runner. Without it the runner is empty.
       - uses: actions/checkout@v4
+
+      # The runner waits for a service CONTAINER to start, not for the process
+      # inside it to be READY to serve. Same distinction as Day 4's
+      # `depends_on: condition: service_healthy` — starting is not readiness.
+      # Poll the registry's API handshake endpoint until it answers.
+      - name: Wait for the registry to accept connections
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf "http://${REGISTRY}/v2/" >/dev/null; then
+              echo "registry ready after ${i} attempt(s)"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "registry never became ready"
+          exit 1
 
       # Tagging by commit SHA is the point of tagging in CI: the tag names the
       # exact source revision the image was built from, so any running container
@@ -73,11 +106,15 @@ jobs:
 
       # The step that carries the deliverable.
       #
-      # Worth understanding WHY localhost works from inside a job container:
-      # `act` mounts the host's Docker socket into the runner, so this `docker`
-      # CLI is talking to the HOST's daemon. The daemon is what performs the
-      # push, so `localhost:5000` is resolved host-side, where the registry's
-      # published port lives — not inside this container.
+      # WHERE THE REGISTRY IS depends on where this runs:
+      #   - On GitHub: the `services:` container above, published on localhost:5000.
+      #   - Under act: act starts the job container with network="host" AND mounts
+      #     the host's Docker socket, so localhost:5000 is the developer's own
+      #     long-running registry container. (The socket alone would carry
+      #     `docker push`, since the HOST daemon performs it and resolves the
+      #     hostname; host networking is what additionally lets a plain `curl`
+      #     reach it.)
+      # Either way the workflow text is identical — which is the point.
       - name: Push to the local registry
         run: |
           docker push "${{ steps.tags.outputs.image }}:${{ steps.tags.outputs.sha_tag }}"
