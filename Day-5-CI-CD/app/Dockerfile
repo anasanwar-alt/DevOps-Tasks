@@ -16,7 +16,7 @@ WORKDIR /app
 COPY package.json package-lock.json tsconfig.json ./
 RUN npm ci
 
-COPYY src ./src
+COPY src ./src
 RUN npm run build
 
 # ---- Stage 2: runtime ----
