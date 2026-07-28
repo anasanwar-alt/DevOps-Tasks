@@ -1,0 +1,130 @@
+# =============================================================================
+# Day 5 — minimal CI pipeline
+#
+# Deliverable: "builds the image and pushes it to the local registry on every
+# commit." That is exactly what this does — nothing more.
+#
+# VOCABULARY (GitHub Actions):
+#   workflow — this whole file. Lives in .github/workflows/ at the REPO ROOT.
+#   event    — what triggers it (`on:`).
+#   job      — a unit of work that gets its own fresh machine.
+#   step     — one command (`run:`) or one reusable action (`uses:`) in a job.
+#   runner   — the machine executing the job. `act` fakes this locally with a
+#              Docker container instead of a GitHub-hosted VM.
+# =============================================================================
+
+name: CI
+
+# --- TRIGGER -----------------------------------------------------------------
+# This single word is what makes it a pipeline rather than a script: nobody runs
+# it by hand. Any push, on any branch, runs the whole thing.
+# `workflow_dispatch` also gives a manual "Run workflow" button on GitHub.
+on:
+  push:
+    branches:
+      - main
+  # this can also take 'inputs.environment', so the person running manually can
+  # provide/change the environment
+  workflow_dispatch:
+
+env:
+  REGISTRY: localhost:5000
+  IMAGE_NAME: day5-app
+  APP_DIR: Day-5-CI-CD/app
+
+jobs:
+  # each job requires unique ids, we can provide reference to jobs within
+  # like for example,
+  # deploy:
+  #   needs: build-and-push
+  #   runs-on: ubuntu-latest
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    # A `service` is a container the runner starts BEFORE any step and removes
+    # after the job. It is how a pipeline gets a database, cache or queue to test
+    # against — and here, a registry to push to.
+    #
+    # This is what lets the job work on a GitHub-hosted runner, where
+    # `localhost:5000` would otherwise be a fresh VM with nothing listening.
+    #
+    # This registry is EPHEMERAL. It is created and
+    # destroyed with the job, so it proves the pipeline works — it is not
+    # durable artifact storage. A real pipeline pushes to a registry that
+    # outlives the run (GHCR, ECR, Harbor...).
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+
+    steps:
+      # `uses:` pulls in a reusable action from another repo — here, the official
+      # one that puts your code on the runner. Without it the runner is empty.
+      - uses: actions/checkout@v4
+
+      # The runner waits for a service CONTAINER to start, not for the process
+      # inside it to be READY to serve. Same distinction as Day 4's
+      # `depends_on: condition: service_healthy` — starting is not readiness.
+      # Poll the registry's API handshake endpoint until it answers.
+      - name: Wait for the registry to accept connections
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf "http://${REGISTRY}/v2/" >/dev/null; then
+              echo "registry ready after ${i} attempt(s)"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "registry never became ready"
+          exit 1
+
+      # Tagging by commit SHA is the point of tagging in CI: the tag names the
+      # exact source revision the image was built from, so any running container
+      # can be traced back to a commit. `latest` is a moving pointer on top.
+      #
+      # GITHUB_SHA is injected by the runner (act reads it from the local git
+      # repo). Writing to $GITHUB_OUTPUT is how a step publishes a value for
+      # later steps to read as steps.<id>.outputs.<name>.
+      - name: Compute image tags
+        id: tags
+        run: |
+          SHA_TAG="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          echo "sha_tag=${SHA_TAG}"              >> "$GITHUB_OUTPUT"
+          echo "image=${REGISTRY}/${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "Will build ${REGISTRY}/${IMAGE_NAME}:${SHA_TAG}"
+
+      # Two -t flags = two tags from ONE build. A tag is only a pointer, so the
+      # second one costs nothing and there is no second build here.
+      - name: Build the image
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          docker build \
+            -t "${{ steps.tags.outputs.image }}:${{ steps.tags.outputs.sha_tag }}" \
+            -t "${{ steps.tags.outputs.image }}:latest" \
+            .
+
+      # The step that carries the deliverable.
+      #
+      # WHERE THE REGISTRY IS depends on where this runs:
+      #   - On GitHub: the `services:` container above, published on localhost:5000.
+      #   - Under act: act starts the job container with network="host" AND mounts
+      #     the host's Docker socket, so localhost:5000 is the developer's own
+      #     long-running registry container. (The socket alone would carry
+      #     `docker push`, since the HOST daemon performs it and resolves the
+      #     hostname; host networking is what additionally lets a plain `curl`
+      #     reach it.)
+      # Either way the workflow text is identical — which is the point.
+      - name: Push to the local registry
+        run: |
+          docker push "${{ steps.tags.outputs.image }}:${{ steps.tags.outputs.sha_tag }}"
+          docker push "${{ steps.tags.outputs.image }}:latest"
+
+      # A push that is not verified is a hope. Ask the registry directly, over
+      # its plain HTTP API, what it now holds.
+      - name: Verify it landed in the registry
+        run: |
+          echo "--- repositories ---"
+          curl -sf "http://${REGISTRY}/v2/_catalog"; echo
+          echo "--- tags for ${IMAGE_NAME} ---"
+          curl -sf "http://${REGISTRY}/v2/${IMAGE_NAME}/tags/list"; echo
