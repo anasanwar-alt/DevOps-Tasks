@@ -1,0 +1,12 @@
+# act reads this file from the working directory (and from ~/.actrc).
+#
+# Maps the workflow's `runs-on: ubuntu-latest` to a concrete Docker image.
+# Without it, act interactively prompts you to pick a runner size on first run,
+# which breaks any non-interactive use.
+#
+# catthehacker/ubuntu:act-latest (~1.2GB) is the "medium" image: Ubuntu plus the
+# tooling GitHub's hosted runners ship with (node, python, docker CLI, git...).
+# GitHub's real ubuntu-latest runner is far larger (~30GB), so act's images are
+# approximations -- an action that depends on a preinstalled tool GitHub has and
+# this image lacks will work on GitHub and fail here. That is act's main caveat.
+-P ubuntu-latest=catthehacker/ubuntu:act-latest

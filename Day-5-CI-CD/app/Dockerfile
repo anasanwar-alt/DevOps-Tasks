@@ -13,11 +13,10 @@ WORKDIR /app
 # `npm ci` (not `npm install`) installs the EXACT tree in package-lock.json and
 # fails if the lock and package.json disagree — the reproducibility a pipeline
 # needs. `npm install` would silently resolve new versions on every run.
-COPY package.json package-lock.json tsconfig.json tsconfig.test.json ./
+COPY package.json package-lock.json tsconfig.json ./
 RUN npm ci
 
 COPY src ./src
-# tsconfig.json excludes *.test.ts, so no test code lands in dist/.
 RUN npm run build
 
 # ---- Stage 2: runtime ----

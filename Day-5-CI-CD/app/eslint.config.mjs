@@ -7,7 +7,7 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   // Build output is generated code — linting it produces only noise.
-  { ignores: ["dist/", "dist-test/", "node_modules/"] },
+  { ignores: ["dist/", "node_modules/"] },
 
   js.configs.recommended,
   ...tseslint.configs.recommended,

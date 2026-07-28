@@ -10,8 +10,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts"],
-  // Tests are compiled by tsconfig.test.json instead, so they never reach dist/
-  // and therefore never reach the production image.
-  "exclude": ["src/**/*.test.ts"]
+  "include": ["src/**/*.ts"]
 }

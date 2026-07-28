@@ -1,0 +1,143 @@
+time="2026-07-28T07:24:16+06:00" level=info msg="Using docker host 'unix:///var/run/docker.sock', and daemon socket 'unix:///var/run/docker.sock'"
+[CI/build-and-push] ⭐ Run Set up job
+[CI/build-and-push] 🚀  Start image=catthehacker/ubuntu:act-latest
+[CI/build-and-push]   🐳  docker pull image=catthehacker/ubuntu:act-latest platform= username= forcePull=true
+[CI/build-and-push]   🐳  docker create image=catthehacker/ubuntu:act-latest platform= entrypoint=["tail" "-f" "/dev/null"] cmd=[] network="host"
+[CI/build-and-push]   🐳  docker run image=catthehacker/ubuntu:act-latest platform= entrypoint=["tail" "-f" "/dev/null"] cmd=[] network="host"
+[CI/build-and-push]   🐳  docker exec cmd=[node --no-warnings -e console.log(process.execPath)] user= workdir=
+[CI/build-and-push]   ✅  Success - Set up job
+[CI/build-and-push] ⭐ Run Main actions/checkout@v4
+[CI/build-and-push]   🐳  docker cp src=/mnt/d/Projects/DevOps/Training Day 5/Assignment/. dst=/mnt/d/Projects/DevOps/Training Day 5/Assignment
+[CI/build-and-push]   ✅  Success - Main actions/checkout@v4 [15.317929709s]
+[CI/build-and-push] ⭐ Run Main Compute image tags
+[CI/build-and-push]   🐳  docker exec cmd=[bash -e /var/run/act/workflow/tags] user= workdir=
+[CI/build-and-push]   | Will build localhost:5000/day5-app:63794af
+[CI/build-and-push]   ✅  Success - Main Compute image tags [504.822032ms]
+[CI/build-and-push]   ⚙  ::set-output:: sha_tag=63794af
+[CI/build-and-push]   ⚙  ::set-output:: image=localhost:5000/day5-app
+[CI/build-and-push] ⭐ Run Main Build the image
+[CI/build-and-push]   🐳  docker exec cmd=[bash -e /var/run/act/workflow/2] user= workdir=app
+[CI/build-and-push]   | #0 building with "default" instance using docker driver
+[CI/build-and-push]   | 
+[CI/build-and-push]   | #1 [internal] load build definition from Dockerfile
+[CI/build-and-push]   | #1 transferring dockerfile: 1.25kB done
+[CI/build-and-push]   | #1 DONE 0.0s
+[CI/build-and-push]   | 
+[CI/build-and-push]   | #2 [internal] load metadata for docker.io/library/node:22
+[CI/build-and-push]   | #2 DONE 0.0s
+[CI/build-and-push]   | 
+[CI/build-and-push]   | #3 [internal] load metadata for docker.io/library/node:22-alpine
+[CI/build-and-push]   | #3 DONE 0.0s
+[CI/build-and-push]   | 
+[CI/build-and-push]   | #4 [internal] load .dockerignore
+[CI/build-and-push]   | #4 transferring context: 86B done
+[CI/build-and-push]   | #4 DONE 0.0s
+[CI/build-and-push]   | 
+[CI/build-and-push]   | #5 [stage-1 1/3] FROM docker.io/library/node:22-alpine
+[CI/build-and-push]   | #5 DONE 0.0s
+[CI/build-and-push]   | 
+[CI/build-and-push]   | #6 [builder 1/6] FROM docker.io/library/node:22
+[CI/build-and-push]   | #6 DONE 0.0s
+[CI/build-and-push]   | 
+[CI/build-and-push]   | #7 [builder 2/6] WORKDIR /app
+[CI/build-and-push]   | #7 CACHED
+[CI/build-and-push]   | 
+[CI/build-and-push]   | #8 [internal] load build context
+[CI/build-and-push]   | #8 transferring context: 64.51kB done
+[CI/build-and-push]   | #8 DONE 0.0s
+[CI/build-and-push]   | 
+[CI/build-and-push]   | #9 [builder 3/6] COPY package.json package-lock.json tsconfig.json tsconfig.test.json ./
+[CI/build-and-push]   | #9 DONE 0.0s
+[CI/build-and-push]   | 
+[CI/build-and-push]   | #10 [builder 4/6] RUN npm ci
+[CI/build-and-push]   | #10 41.99 
+[CI/build-and-push]   | #10 41.99 added 123 packages, and audited 124 packages in 41s
+[CI/build-and-push]   | #10 41.99 
+[CI/build-and-push]   | #10 41.99 37 packages are looking for funding
+[CI/build-and-push]   | #10 41.99   run `npm fund` for details
+[CI/build-and-push]   | #10 42.15 
+[CI/build-and-push]   | #10 42.15 12 vulnerabilities (1 low, 11 high)
+[CI/build-and-push]   | #10 42.15 
+[CI/build-and-push]   | #10 42.15 To address issues that do not require attention, run:
+[CI/build-and-push]   | #10 42.15   npm audit fix
+[CI/build-and-push]   | #10 42.15 
+[CI/build-and-push]   | #10 42.15 To address all issues, run:
+[CI/build-and-push]   | #10 42.15   npm audit fix --force
+[CI/build-and-push]   | #10 42.15 
+[CI/build-and-push]   | #10 42.15 Run `npm audit` for details.
+[CI/build-and-push]   | #10 42.15 npm notice
+[CI/build-and-push]   | #10 42.15 npm notice New major version of npm available! 10.9.8 -> 12.0.1
+[CI/build-and-push]   | #10 42.15 npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.0.1
+[CI/build-and-push]   | #10 42.15 npm notice To update run: npm install -g npm@12.0.1
+[CI/build-and-push]   | #10 42.15 npm notice
+[CI/build-and-push]   | #10 DONE 42.2s
+[CI/build-and-push]   | 
+[CI/build-and-push]   | #11 [builder 5/6] COPY src ./src
+[CI/build-and-push]   | #11 DONE 0.0s
+[CI/build-and-push]   | 
+[CI/build-and-push]   | #12 [builder 6/6] RUN npm run build
+[CI/build-and-push]   | #12 0.330 
+[CI/build-and-push]   | #12 0.330 > day5-app@1.0.0 build
+[CI/build-and-push]   | #12 0.330 > tsc -p tsconfig.json
+[CI/build-and-push]   | #12 0.330 
+[CI/build-and-push]   | #12 DONE 1.2s
+[CI/build-and-push]   | 
+[CI/build-and-push]   | #13 [stage-1 2/3] WORKDIR /app
+[CI/build-and-push]   | #13 CACHED
+[CI/build-and-push]   | 
+[CI/build-and-push]   | #14 [stage-1 3/3] COPY --from=builder /app/dist ./dist
+[CI/build-and-push]   | #14 DONE 0.1s
+[CI/build-and-push]   | 
+[CI/build-and-push]   | #15 exporting to image
+[CI/build-and-push]   | #15 exporting layers 0.0s done
+[CI/build-and-push]   | #15 writing image sha256:447386dc96886e8c766077a4fddc62cd7737a76757b9d5cf432298722df21ed2 done
+[CI/build-and-push]   | #15 naming to localhost:5000/day5-app:63794af done
+[CI/build-and-push]   | #15 naming to localhost:5000/day5-app:latest done
+[CI/build-and-push]   | #15 DONE 0.0s
+[CI/build-and-push]   ✅  Success - Main Build the image [44.475638518s]
+[CI/build-and-push] ⭐ Run Main Push to the local registry
+[CI/build-and-push]   🐳  docker exec cmd=[bash -e /var/run/act/workflow/3] user= workdir=
+[CI/build-and-push]   | The push refers to repository [localhost:5000/day5-app]
+[CI/build-and-push]   | 5642367a3cbe: Preparing
+[CI/build-and-push]   | 63febd549226: Preparing
+[CI/build-and-push]   | dd812e67e586: Preparing
+[CI/build-and-push]   | fd246171abbe: Preparing
+[CI/build-and-push]   | 94ba1b56d694: Preparing
+[CI/build-and-push]   | 34884abbe928: Preparing
+[CI/build-and-push]   | 34884abbe928: Waiting
+[CI/build-and-push]   | dd812e67e586: Mounted from day3-hello
+[CI/build-and-push]   | 94ba1b56d694: Mounted from day3-hello
+[CI/build-and-push]   | 63febd549226: Mounted from day3-hello
+[CI/build-and-push]   | fd246171abbe: Mounted from day3-hello
+[CI/build-and-push]   | 34884abbe928: Mounted from day3-hello
+[CI/build-and-push]   | 5642367a3cbe: Pushed
+[CI/build-and-push]   | 63794af: digest: sha256:c1d210ccb64eac6943e1337ad5c1ce068c222576b9fa7c304dc9fff003550398 size: 1572
+[CI/build-and-push]   | The push refers to repository [localhost:5000/day5-app]
+[CI/build-and-push]   | 5642367a3cbe: Preparing
+[CI/build-and-push]   | 63febd549226: Preparing
+[CI/build-and-push]   | dd812e67e586: Preparing
+[CI/build-and-push]   | fd246171abbe: Preparing
+[CI/build-and-push]   | 94ba1b56d694: Preparing
+[CI/build-and-push]   | 34884abbe928: Preparing
+[CI/build-and-push]   | 34884abbe928: Waiting
+[CI/build-and-push]   | 94ba1b56d694: Layer already exists
+[CI/build-and-push]   | 5642367a3cbe: Layer already exists
+[CI/build-and-push]   | fd246171abbe: Layer already exists
+[CI/build-and-push]   | dd812e67e586: Layer already exists
+[CI/build-and-push]   | 63febd549226: Layer already exists
+[CI/build-and-push]   | 34884abbe928: Layer already exists
+[CI/build-and-push]   | latest: digest: sha256:c1d210ccb64eac6943e1337ad5c1ce068c222576b9fa7c304dc9fff003550398 size: 1572
+[CI/build-and-push]   ✅  Success - Main Push to the local registry [705.013329ms]
+[CI/build-and-push] ⭐ Run Main Verify it landed in the registry
+[CI/build-and-push]   🐳  docker exec cmd=[bash -e /var/run/act/workflow/4] user= workdir=
+[CI/build-and-push]   | --- repositories ---
+[CI/build-and-push]   | {"repositories":["day3-hello","day5-app"]}
+[CI/build-and-push]   | 
+[CI/build-and-push]   | --- tags for day5-app ---
+[CI/build-and-push]   | {"name":"day5-app","tags":["63794af","latest"]}
+[CI/build-and-push]   | 
+[CI/build-and-push]   ✅  Success - Main Verify it landed in the registry [567.150748ms]
+[CI/build-and-push] ⭐ Run Complete job
+[CI/build-and-push] Cleaning up container for job build-and-push
+[CI/build-and-push]   ✅  Success - Complete job
+[CI/build-and-push] 🏁  Job succeeded

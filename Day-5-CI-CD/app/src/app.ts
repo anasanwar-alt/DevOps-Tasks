@@ -1,20 +1,12 @@
 import { createServer, IncomingMessage, Server, ServerResponse } from "node:http";
 import { hostname } from "node:os";
 
-/**
- * The greeting body, extracted as a pure function.
- *
- * This split is what makes the pipeline's `test` stage meaningful: a function
- * with no I/O and no globals can be asserted on directly, with no server, no
- * port and no timing. Day 3's version inlined this string inside the request
- * handler, where the only way to test it was to boot a server and make a real
- * HTTP call.
- */
+/** The greeting body, kept as a pure function of its inputs. */
 export function greeting(host: string, pid: number): string {
   return `Hello World from Docker — pid ${pid}, host ${host}\n`;
 }
 
-/** Build the HTTP server without binding a port, so tests control the lifecycle. */
+/** Build the HTTP server without binding a port; the caller owns the lifecycle. */
 export function createApp(): Server {
   return createServer((req: IncomingMessage, res: ServerResponse) => {
     // Log to stdout so `docker logs` (which only sees PID 1's streams) captures it.
