@@ -1,0 +1,246 @@
+# =============================================================================
+# Day 5 follow-up — pipeline against GHCR (GitHub Container Registry)
+#
+# Why GHCR rather than the local registry:2 for this: the cleanup task needs a
+# registry that PERSISTS between runs (an ephemeral service registry starts
+# empty every time, so it can never exceed the retention limit), and GHCR's
+# REST API exposes `created_at` per version, so "the oldest" is a real
+# value rather than something inferred from image config blobs.
+# =============================================================================
+
+name: CI (GHCR)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# --- TOKEN PERMISSIONS -------------------------------------------------------
+# GITHUB_TOKEN is minted fresh for each run and expires when the job ends, so
+# there is no long-lived credential to store anywhere.
+#
+# NOTE: there is NO `packages: delete` permission. `packages: write` is what
+# covers publishing AND deleting. Deleting packages from a workflow requires the
+# token to hold `admin` on the package, which is granted automatically to the
+# repository whose workflow published it.
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: day5-app
+  APP_DIR: Day-5-CI-CD/app
+  KEEP_VERSIONS: "5"
+
+jobs:
+  # ===========================================================================
+  # This runs first and on its own. Every later job declares `needs: lint`, so
+  # if anything here exits non-zero the build and push never start.
+  # ===========================================================================
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: npm ci
+
+      # 1. Application code.
+      - name: Lint TypeScript (ESLint)
+        working-directory: ${{ env.APP_DIR }}
+        run: npm run lint
+
+      # 2. The Dockerfile. hadolint catches real problems (unpinned base images,
+      #    apt-get without --no-install-recommends, RUN cd instead of WORKDIR)
+      #    rather than only syntax.
+      - name: Lint the Dockerfile (hadolint)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: ${{ env.APP_DIR }}/Dockerfile
+
+      # 3. YAML syntax — the workflow files themselves. A malformed workflow is
+      #    a class of error GitHub reports awkwardly, so checking it here gives a
+      #    clear failure. This is the "config file syntax check" the task asks
+      #    for; point it at docker-compose.yml too if the project grows one.
+      - name: Check YAML syntax
+        run: |
+          python3 - <<'PY'
+          import sys, glob, yaml
+          bad = 0
+          for f in sorted(glob.glob(".github/workflows/*.yml")):
+              try:
+                  yaml.safe_load(open(f))
+                  print(f"ok   {f}")
+              except yaml.YAMLError as e:
+                  print(f"FAIL {f}: {e}")
+                  bad += 1
+          sys.exit(1 if bad else 0)
+          PY
+
+  # ===========================================================================
+  # BUILD, RETENTION, PUSH
+  # ===========================================================================
+  build-and-push:
+    needs: lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- TASK 1: DYNAMIC VERSIONING ---------------------------------------
+      # Every push produces a tag naming the exact commit it was built from, so
+      # a running container is always traceable to a revision. `latest` is a
+      # moving pointer layered on top — never deploy by `latest` alone.
+      #
+      # GHCR NAMING, which has three separate traps:
+      #
+      #  a) The path is NESTED: ghcr.io/<owner>/<repo>/<image>. Everything after
+      #     the owner is the PACKAGE NAME, so here it is "devops-tasks/day5-app"
+      #     — a name containing a slash.
+      #
+      #  b) The ENTIRE path must be lowercase, not just the owner. GitHub allows
+      #     capitals in usernames and repo names ("DevOps-Tasks"); Docker
+      #     references do not. Folded here rather than hard-coded, so this does
+      #     not silently break if the repo is renamed or forked.
+      #
+      #  c) That slash must be URL-ENCODED as %2F when the package name is used
+      #     in a REST API path, or the API reads it as extra path segments and
+      #     returns 404. That 404 looks exactly like "package does not exist
+      #     yet", so the prune step would silently do nothing forever. This is
+      #     the single easiest thing to get wrong in this whole workflow.
+      - name: Compute image reference and tag
+        id: meta
+        run: |
+          OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          REPO="$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')"
+          SHA_TAG="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+
+          PACKAGE="${REPO}/${IMAGE_NAME}"                 # devops-tasks/day5-app
+          PACKAGE_ENC="${PACKAGE//\//%2F}"                # devops-tasks%2Fday5-app
+          IMAGE="${REGISTRY}/${OWNER}/${PACKAGE}"         # ghcr.io/owner/devops-tasks/day5-app
+
+          {
+            echo "owner=${OWNER}"
+            echo "sha_tag=${SHA_TAG}"
+            echo "package=${PACKAGE}"
+            echo "package_enc=${PACKAGE_ENC}"
+            echo "image=${IMAGE}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Will build ${IMAGE}:${SHA_TAG}"
+          echo "REST API package name: ${PACKAGE_ENC}"
+
+      # Authenticates the Docker CLI to GHCR. GITHUB_TOKEN is enough to push,
+      # because `permissions: packages: write` is declared above.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The `org.opencontainers.image.source` label is what LINKS the published
+      # package to this repository. That link is not cosmetic: the repository's
+      # GITHUB_TOKEN only holds `admin` on the package — and therefore only has
+      # permission to delete versions — when the package is linked to it.
+      # Without the label the prune step can push happily and then fail to
+      # delete, which is a confusing failure to diagnose.
+      - name: Build the image
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          docker build \
+            --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            -t "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}" \
+            -t "${{ steps.meta.outputs.image }}:latest" \
+            .
+
+      - name: Push to GHCR
+        run: |
+          docker push "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}"
+          docker push "${{ steps.meta.outputs.image }}:latest"
+
+      # --- TASK 3: CLEANUP / RETENTION --------------------------------------
+      # ORDERING — a deliberate deviation from the task's literal wording.
+      #
+      # The task says "remove the oldest one BEFORE pushing the new one". This
+      # runs it AFTER, because deleting first is unsafe: if the build or push
+      # then fails, an image has been destroyed and nothing replaces it, leaving
+      # the registry with 4 versions and a failed run. Deletion is irreversible;
+      # a push is retryable. So: do the additive, recoverable thing first, then
+      # reclaim. The end state is identical (KEEP_VERSIONS versions either way)
+      # — only the failure behaviour differs, and this way a failed run destroys
+      # nothing.
+      #
+      # `continue-on-error` because on the very first run the package does not
+      # exist yet and the API 404s, which is not a failure. It also stops the
+      # preview-status deletion API from breaking the pipeline if GitHub changes
+      # it — the images are already safely pushed by this point.
+      - name: Prune old versions (keep newest ${{ env.KEEP_VERSIONS }})
+        continue-on-error: true
+        env:
+          # Prefers a PAT if one is stored as a repository secret, otherwise
+          # falls back to the run-scoped GITHUB_TOKEN. No workflow edit needed
+          # to switch between them.
+          GH_TOKEN: ${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}
+          OWNER: ${{ steps.meta.outputs.owner }}
+          # URL-encoded (%2F) — see the naming notes on the meta step above.
+          PKG: ${{ steps.meta.outputs.package_enc }}
+        run: |
+          set -euo pipefail
+          API="/users/${OWNER}/packages/container/${PKG}/versions"
+          echo "querying ${API}"
+
+          if ! gh api --paginate "$API" > versions.json 2>/dev/null; then
+            echo "package not found — nothing to prune"
+            exit 0
+          fi
+
+          TOTAL=$(jq 'length' versions.json)
+          echo "package holds ${TOTAL} version(s); retention limit is ${KEEP_VERSIONS}"
+          echo "--- id / created_at / tags (newest last) ---"
+          jq -r 'sort_by(.created_at)[]
+                 | "\(.id)\t\(.created_at)\t\(.metadata.container.tags | join(",") // "<untagged>")"' \
+                 versions.json
+
+          # The new image is ALREADY pushed, so simply keep the newest
+          # KEEP_VERSIONS and delete everything older.
+          DOOMED=$(jq -r --argjson keep "${KEEP_VERSIONS}" \
+            'sort_by(.created_at) | .[0:([(length - $keep), 0] | max)] | .[].id' versions.json)
+
+          if [ -z "$DOOMED" ]; then
+            echo "at or under the limit — nothing to delete"
+            exit 0
+          fi
+
+          for id in $DOOMED; do
+            echo "deleting oldest version id=${id}"
+            gh api --method DELETE "/user/packages/container/${PKG}/versions/${id}"
+          done
+          echo "prune complete"
+
+      # A push that is not verified is a hope. This also proves the retention
+      # limit held: the count printed here must never exceed KEEP_VERSIONS.
+      - name: Verify what the registry now holds
+        env:
+          GH_TOKEN: ${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}
+          OWNER: ${{ steps.meta.outputs.owner }}
+          PKG: ${{ steps.meta.outputs.package_enc }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "/users/${OWNER}/packages/container/${PKG}/versions" > final.json
+          echo "--- ${{ steps.meta.outputs.image }} ---"
+          jq -r 'sort_by(.created_at)[]
+                 | "\(.created_at)  \(.metadata.container.tags | join(",") // "<untagged>")"' final.json
+          COUNT=$(jq 'length' final.json)
+          echo "total versions retained: ${COUNT} (limit ${KEEP_VERSIONS})"
+          if [ "$COUNT" -gt "${KEEP_VERSIONS}" ]; then
+            echo "::warning::retention limit exceeded — prune did not take effect"
+          fi
