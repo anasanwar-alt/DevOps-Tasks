@@ -1,0 +1,4 @@
+# Carried over from Day 5. `act` defaults to a tiny image with almost no tools
+# in it; this pins the runner image that actually resembles GitHub's
+# ubuntu-latest (node, curl, git, docker CLI all present).
+-P ubuntu-latest=catthehacker/ubuntu:act-latest

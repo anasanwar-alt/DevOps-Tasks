@@ -1,0 +1,10 @@
+# Anything listed here is never sent to the Docker daemon as build context.
+# Excluding node_modules matters most: it keeps the context small AND forces the
+# image to install its own dependencies for the right platform, instead of
+# inheriting whatever was installed on a Windows/WSL host.
+node_modules
+dist
+dist-test
+.git
+.gitignore
+*.md

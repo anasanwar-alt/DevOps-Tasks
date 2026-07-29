@@ -1,0 +1,10 @@
+# Stage 1 does `COPY . .`, so this file is what stops the host's node_modules
+# (built for Windows/WSL) and any local dist/ from being copied over the ones
+# `npm ci` just installed inside the image.
+node_modules
+dist
+.git
+.gitignore
+*.md
+Dockerfile
+.dockerignore

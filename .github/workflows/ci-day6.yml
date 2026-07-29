@@ -1,0 +1,158 @@
+# =============================================================================
+# Day 6 — CI for a two-service application.
+#
+# Day 5's pipeline built ONE image and pushed it. The deliverable here adds two
+# things: a quality gate that must pass first (lint + tests), and a second image.
+# The registry mechanics underneath are unchanged from Day 5 — deliberately.
+#
+# Two jobs, because they have different failure meanings:
+#   lint-and-test  — "is this code acceptable?"  Cheap, runs on Node directly.
+#   build-and-push — "package and publish it."   Only worth doing if the above passed.
+# =============================================================================
+
+name: CI (Day 6)
+
+on:
+  push:
+    branches:
+      - main
+      - Day-6-Fullstack-App
+  workflow_dispatch:
+
+env:
+  REGISTRY: localhost:5000
+  APP_DIR: Day-6-Fullstack-App
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Quality gate.
+  #
+  # `strategy.matrix` runs this job once PER VALUE — two parallel jobs from one
+  # block of YAML, one for backend/ and one for frontend/. ${{ matrix.service }}
+  # is the current value. Without it this job would be copy-pasted twice.
+  # ---------------------------------------------------------------------------
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      # Without this, a backend failure would cancel the frontend job mid-run and
+      # you would not learn whether the frontend was also broken.
+      fail-fast: false
+      matrix:
+        service: [backend, frontend]
+
+    defaults:
+      run:
+        working-directory: ${{ env.APP_DIR }}/${{ matrix.service }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          # Caches ~/.npm between runs, keyed on the lockfile. Needs the path
+          # because the lockfiles are not at the repo root.
+          cache: npm
+          cache-dependency-path: ${{ env.APP_DIR }}/${{ matrix.service }}/package-lock.json
+
+      # `npm ci` not `npm install` — same reason as in the Dockerfiles: it
+      # installs the exact locked tree and fails loudly if the lock is stale.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      # --if-present makes one step work for both services: the backend has a
+      # `test` script, the frontend does not, and a missing script is not a
+      # failure. The frontend's real gate is lint + a build that must compile.
+      - name: Test
+        run: npm test --if-present
+
+      - name: Build
+        run: npm run build
+
+  # ---------------------------------------------------------------------------
+  # Package and publish.
+  # ---------------------------------------------------------------------------
+  build-and-push:
+    runs-on: ubuntu-latest
+    # The whole point of the gate: nothing is built, let alone published, unless
+    # BOTH matrix legs above succeeded.
+    needs: lint-and-test
+
+    # A `service` is a container the runner starts before any step and removes
+    # after the job — how a pipeline gets a database, a cache, or here a
+    # registry to push to. It is EPHEMERAL: it proves the pipeline works, it is
+    # not durable artifact storage. A real pipeline targets a registry that
+    # outlives the run (GHCR, ECR, Harbor).
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The runner waits for the service CONTAINER to start, not for the process
+      # inside it to be READY. Same distinction as `depends_on: service_healthy`
+      # in compose. Poll the registry's API handshake endpoint until it answers.
+      - name: Wait for the registry to accept connections
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf "http://${REGISTRY}/v2/" >/dev/null; then
+              echo "registry ready after ${i} attempt(s)"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "registry never became ready"
+          exit 1
+
+      # Tagging by commit SHA is the point of tagging in CI: the tag names the
+      # exact source revision an image was built from, so any running container
+      # traces back to a commit. `latest` is a moving pointer on top.
+      - name: Compute the image tag
+        id: tags
+        run: |
+          SHA_TAG="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          echo "sha_tag=${SHA_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Will build and push :${SHA_TAG} and :latest for both services"
+
+      # A bash loop, NOT a second matrix — on purpose.
+      #
+      # A matrix here would give each leg its own registry service container, so
+      # no single /v2/_catalog would ever list both images. For a step whose
+      # entire job is to prove the push landed, that would be actively
+      # misleading. One job, one registry, both images.
+      - name: Build and push both images
+        env:
+          SHA_TAG: ${{ steps.tags.outputs.sha_tag }}
+        run: |
+          set -euo pipefail
+          for svc in backend frontend; do
+            IMAGE="${REGISTRY}/day6-${svc}"
+            echo "::group::${IMAGE}"
+            # Two -t flags = two tags from ONE build. A tag is only a pointer,
+            # so the second costs nothing and there is no second build.
+            docker build \
+              -t "${IMAGE}:${SHA_TAG}" \
+              -t "${IMAGE}:latest" \
+              "${APP_DIR}/${svc}"
+            docker push "${IMAGE}:${SHA_TAG}"
+            docker push "${IMAGE}:latest"
+            echo "::endgroup::"
+          done
+
+      # A push that is not verified is a hope. Ask the registry directly, over
+      # its plain HTTP API, what it now holds.
+      - name: Verify both images landed in the registry
+        run: |
+          echo "--- repositories ---"
+          curl -sf "http://${REGISTRY}/v2/_catalog"; echo
+          for svc in backend frontend; do
+            echo "--- tags for day6-${svc} ---"
+            curl -sf "http://${REGISTRY}/v2/day6-${svc}/tags/list"; echo
+          done

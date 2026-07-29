@@ -1,0 +1,89 @@
+# Day 6 — the whole stack in one file.
+#
+# Three services on one private network created by compose. The ONLY thing the
+# outside world can reach is the frontend on :8080; everything else talks over
+# service names (frontend -> backend -> db) that compose's built-in DNS resolves.
+#
+#   browser --> :8080 frontend(nginx) --> backend:3000(express) --> db:5432(postgres)
+#
+# The structure is Day 4's, extended from two services to three.
+name: day6
+
+services:
+  # ---- PostgreSQL database ----
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      # Named volume -> the DB survives `compose down` and container recreation.
+      # This is the "volume for DB persistence" the task asks for. Proof that it
+      # works is `down` then `up` (data stays) vs `down -v` then `up` (data gone).
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready ships with the postgres image. $$ escapes compose
+      # interpolation so the shell INSIDE the container expands its own env vars.
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # ---- Express REST API ----
+  backend:
+    build: ./backend
+    environment:
+      # No hard-coded connection details in the image — all injected here.
+      PGHOST: db # resolves via compose's DNS to the db service
+      PGPORT: "5432"
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB}
+      PORT: "3000"
+    ports:
+      # Published for demonstration and evidence capture only. The frontend does
+      # NOT use this — it reaches the backend over the internal network. Delete
+      # this block and the app still works end to end.
+      - "3000:3000"
+    depends_on:
+      db:
+        # Start the backend only once the DB reports healthy, not merely started.
+        condition: service_healthy
+    healthcheck:
+      # Node is guaranteed present (it's a node image); no curl/wget dependency.
+      test:
+        - "CMD"
+        - "node"
+        - "-e"
+        - "require('http').get('http://localhost:3000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # ---- React bundle served by nginx, which also proxies /api ----
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        # NOT optional here. nginx resolves the literal hostname in
+        # `proxy_pass http://backend:3000` once at startup and exits if it does
+        # not resolve — so the backend must exist and be healthy first.
+        condition: service_healthy
+    healthcheck:
+      # busybox wget ships in nginx:alpine; there is no curl in this image.
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost/"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  pgdata:

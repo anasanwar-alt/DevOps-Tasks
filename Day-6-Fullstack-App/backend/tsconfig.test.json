@@ -1,0 +1,11 @@
+{
+  // Same compiler settings as the build, but WITHOUT the test exclusion and
+  // emitting to a different folder. `npm test` compiles to dist-test/ and runs
+  // `node --test` over it; `npm run build` compiles to dist/ and ships that.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist-test"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": []
+}

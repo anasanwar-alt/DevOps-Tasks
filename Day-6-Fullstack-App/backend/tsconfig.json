@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"],
+  // Tests are compiled separately (see tsconfig.test.json) so that dist/ — the
+  // only thing the runtime image copies — never contains test code.
+  "exclude": ["src/**/*.test.ts"]
+}
