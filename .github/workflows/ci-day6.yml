@@ -8,6 +8,16 @@
 # Two jobs, because they have different failure meanings:
 #   lint-and-test  — "is this code acceptable?"  Cheap, runs on Node directly.
 #   build-and-push — "package and publish it."   Only worth doing if the above passed.
+#
+# PUBLISHING TARGETS — both, from one build:
+#   localhost:5000  the task's requirement. Ephemeral: the `services:` registry
+#                   is created and destroyed with the job, so it proves the
+#                   pipeline works but leaves nothing behind.
+#   ghcr.io         beyond the brief, and the reason to bother: a DURABLE
+#                   package you can actually pull, inspect and point at after
+#                   the run is over.
+# Tagging is free (a tag is a pointer, not a copy), so one `docker build` with
+# four -t flags feeds both registries. There is no second build.
 # =============================================================================
 
 name: CI (Day 6)
@@ -17,10 +27,19 @@ on:
     branches:
       - main
       - Day-6-Fullstack-App
+      - Day-6-Followups
   workflow_dispatch:
+
+# GITHUB_TOKEN is minted fresh per run and expires when the job ends, so there
+# is no long-lived credential stored anywhere. `packages: write` is what lets it
+# push to GHCR; without this the login succeeds and the push 403s.
+permissions:
+  contents: read
+  packages: write
 
 env:
   REGISTRY: localhost:5000
+  GHCR: ghcr.io
   APP_DIR: Day-6-Fullstack-App
 
 jobs:
@@ -84,9 +103,7 @@ jobs:
 
     # A `service` is a container the runner starts before any step and removes
     # after the job — how a pipeline gets a database, a cache, or here a
-    # registry to push to. It is EPHEMERAL: it proves the pipeline works, it is
-    # not durable artifact storage. A real pipeline targets a registry that
-    # outlives the run (GHCR, ECR, Harbor).
+    # registry to push to.
     services:
       registry:
         image: registry:2
@@ -99,7 +116,7 @@ jobs:
       # The runner waits for the service CONTAINER to start, not for the process
       # inside it to be READY. Same distinction as `depends_on: service_healthy`
       # in compose. Poll the registry's API handshake endpoint until it answers.
-      - name: Wait for the registry to accept connections
+      - name: Wait for the local registry to accept connections
         run: |
           for i in $(seq 1 30); do
             if curl -sf "http://${REGISTRY}/v2/" >/dev/null; then
@@ -111,48 +128,125 @@ jobs:
           echo "registry never became ready"
           exit 1
 
-      # Tagging by commit SHA is the point of tagging in CI: the tag names the
-      # exact source revision an image was built from, so any running container
-      # traces back to a commit. `latest` is a moving pointer on top.
-      - name: Compute the image tag
-        id: tags
-        run: |
-          SHA_TAG="$(echo "${GITHUB_SHA}" | cut -c1-7)"
-          echo "sha_tag=${SHA_TAG}" >> "$GITHUB_OUTPUT"
-          echo "Will build and push :${SHA_TAG} and :latest for both services"
-
-      # A bash loop, NOT a second matrix — on purpose.
+      # GHCR NAMING has three traps, all learned on Day 5:
       #
-      # A matrix here would give each leg its own registry service container, so
-      # no single /v2/_catalog would ever list both images. For a step whose
-      # entire job is to prove the push landed, that would be actively
-      # misleading. One job, one registry, both images.
-      - name: Build and push both images
+      #  a) The path is NESTED: ghcr.io/<owner>/<repo>/<image>. Everything after
+      #     the owner is the PACKAGE NAME — here "devops-tasks/day6-backend", a
+      #     name that contains a slash.
+      #  b) The ENTIRE path must be lowercase, not just the owner. GitHub allows
+      #     capitals in usernames and repo names ("DevOps-Tasks"); Docker
+      #     references do not. Folded here rather than hard-coded, so this does
+      #     not break if the repo is renamed or forked.
+      #  c) That slash must be URL-encoded as %2F when the package name appears
+      #     in a REST API path, or the API reads it as extra path segments and
+      #     404s — which looks exactly like "package does not exist yet".
+      - name: Compute image references and tag
+        id: meta
+        run: |
+          OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          REPO="$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')"
+          SHA_TAG="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          {
+            echo "owner=${OWNER}"
+            echo "repo=${REPO}"
+            echo "sha_tag=${SHA_TAG}"
+          } >> "$GITHUB_OUTPUT"
+          echo "local : ${REGISTRY}/day6-<service>:${SHA_TAG}"
+          echo "ghcr  : ${GHCR}/${OWNER}/${REPO}/day6-<service>:${SHA_TAG}"
+
+      # `env.ACT` is set only when running under nektos/act, which has no GHCR
+      # credentials. Skipping the login and the GHCR push keeps local runs
+      # working; the local-registry half still exercises the whole pipeline.
+      - name: Log in to GHCR
+        if: ${{ !env.ACT }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GHCR }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ONE build per service, FOUR tags. A tag is a pointer, not a copy, so the
+      # three extra names cost nothing and no image is built twice.
+      #
+      # The org.opencontainers.image.source label is what LINKS the published
+      # package to this repository. That link is not cosmetic — it is what gives
+      # the repo's GITHUB_TOKEN admin rights over the package, and it is what
+      # makes the package page show the source repo.
+      - name: Build both images
         env:
-          SHA_TAG: ${{ steps.tags.outputs.sha_tag }}
+          OWNER: ${{ steps.meta.outputs.owner }}
+          REPO: ${{ steps.meta.outputs.repo }}
+          SHA_TAG: ${{ steps.meta.outputs.sha_tag }}
         run: |
           set -euo pipefail
           for svc in backend frontend; do
-            IMAGE="${REGISTRY}/day6-${svc}"
-            echo "::group::${IMAGE}"
-            # Two -t flags = two tags from ONE build. A tag is only a pointer,
-            # so the second costs nothing and there is no second build.
+            LOCAL="${REGISTRY}/day6-${svc}"
+            GH="${GHCR}/${OWNER}/${REPO}/day6-${svc}"
+            echo "::group::build day6-${svc}"
             docker build \
-              -t "${IMAGE}:${SHA_TAG}" \
-              -t "${IMAGE}:latest" \
+              --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+              --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+              -t "${LOCAL}:${SHA_TAG}" -t "${LOCAL}:latest" \
+              -t "${GH}:${SHA_TAG}"    -t "${GH}:latest" \
               "${APP_DIR}/${svc}"
-            docker push "${IMAGE}:${SHA_TAG}"
-            docker push "${IMAGE}:latest"
             echo "::endgroup::"
           done
 
-      # A push that is not verified is a hope. Ask the registry directly, over
-      # its plain HTTP API, what it now holds.
-      - name: Verify both images landed in the registry
+      # The task's actual requirement.
+      #
+      # A bash loop, NOT a second matrix — on purpose. A matrix would give each
+      # leg its own registry service container, so no single /v2/_catalog would
+      # ever list both images. For a step whose entire job is to prove the push
+      # landed, that would be actively misleading.
+      - name: Push to the local registry
+        env:
+          SHA_TAG: ${{ steps.meta.outputs.sha_tag }}
+        run: |
+          set -euo pipefail
+          for svc in backend frontend; do
+            docker push "${REGISTRY}/day6-${svc}:${SHA_TAG}"
+            docker push "${REGISTRY}/day6-${svc}:latest"
+          done
+
+      # The durable half. Note there is no rebuild — these are the same images,
+      # already built above, under a second name.
+      - name: Push to GHCR
+        if: ${{ !env.ACT }}
+        env:
+          OWNER: ${{ steps.meta.outputs.owner }}
+          REPO: ${{ steps.meta.outputs.repo }}
+          SHA_TAG: ${{ steps.meta.outputs.sha_tag }}
+        run: |
+          set -euo pipefail
+          for svc in backend frontend; do
+            GH="${GHCR}/${OWNER}/${REPO}/day6-${svc}"
+            docker push "${GH}:${SHA_TAG}"
+            docker push "${GH}:latest"
+          done
+
+      # A push that is not verified is a hope. Ask each registry directly.
+      - name: Verify the local registry
         run: |
           echo "--- repositories ---"
           curl -sf "http://${REGISTRY}/v2/_catalog"; echo
           for svc in backend frontend; do
             echo "--- tags for day6-${svc} ---"
             curl -sf "http://${REGISTRY}/v2/day6-${svc}/tags/list"; echo
+          done
+
+      - name: Verify GHCR
+        if: ${{ !env.ACT }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ steps.meta.outputs.owner }}
+          REPO: ${{ steps.meta.outputs.repo }}
+        run: |
+          set -euo pipefail
+          for svc in backend frontend; do
+            # %2F, not a literal slash — see the naming notes on the meta step.
+            PKG="${REPO}%2Fday6-${svc}"
+            echo "--- ${GHCR}/${OWNER}/${REPO}/day6-${svc} ---"
+            gh api --paginate "/users/${OWNER}/packages/container/${PKG}/versions" \
+              | jq -r 'sort_by(.created_at)[]
+                       | "\(.created_at)  \(.metadata.container.tags | join(",") // "<untagged>")"'
           done

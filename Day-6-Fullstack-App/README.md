@@ -343,11 +343,55 @@ flags are two pointers to one image, so the second tag costs nothing. The SHA ta
 — it names the exact revision an image was built from, so a running container traces back to a
 commit. `latest` is a moving pointer on top.
 
-### 8.4 The registry is ephemeral
+### 8.4 Two registries, one build
 
-The `services:` registry is created and destroyed with the job. It proves the pipeline works; it is
-not durable artifact storage. A real pipeline pushes to a registry that outlives the run — GHCR, ECR,
-Harbor. Day 5 also built a GHCR variant with retention pruning, which is where that goes next.
+The task asks for the local registry, and that is what `localhost:5000` satisfies. But the
+`services:` registry is created and destroyed with the job — it proves the pipeline works and then
+leaves **nothing behind**. There is no artifact to pull, inspect, or point at once the run is over.
+
+So the pipeline also publishes to **GHCR**, which is beyond the brief and is the half that produces
+something durable:
+
+| Registry | Lifetime | Purpose |
+|---|---|---|
+| `localhost:5000` | destroyed with the job | satisfies the task; proves the push mechanics |
+| `ghcr.io/<owner>/devops-tasks/day6-<service>` | permanent | a real package you can `docker pull` |
+
+**There is no second build.** One `docker build` per service carries four `-t` flags — two local
+names and two GHCR names — because a tag is a pointer, not a copy. The GHCR push step transfers the
+*same* image under a second name. The log makes this visible: the second push of any tag reports
+`Layer already exists` for every layer and moves zero bytes.
+
+Three GHCR naming traps, all inherited from Day 5 and handled in the `meta` step:
+
+1. The path is **nested** — `ghcr.io/<owner>/<repo>/<image>` — so the package name is
+   `devops-tasks/day6-backend`, a name containing a slash.
+2. The **entire** reference must be lowercase. GitHub permits capitals in repo names
+   (`DevOps-Tasks`); Docker references do not. Folded at runtime rather than hard-coded, so renaming
+   or forking the repo does not silently break it.
+3. That slash must be **URL-encoded as `%2F`** when the package name appears in a REST API path, or
+   the API reads it as extra path segments and returns 404 — which looks exactly like "the package
+   does not exist yet".
+
+The `org.opencontainers.image.source` label is what links the published package back to this
+repository. That link is not cosmetic: it is what grants the repo's `GITHUB_TOKEN` admin rights over
+the package, and what makes the package page show its source.
+
+> **GHCR packages are private by default.** The push will succeed and the package will not be
+> publicly visible until its visibility is changed under Package settings. A 404 when pulling
+> anonymously means private, not missing.
+
+### 8.5 Running it locally with `act`
+
+The GHCR login, push and verify steps carry `if: ${{ !env.ACT }}`. `act` sets `ACT=true`, and it has
+no GHCR credentials, so those steps are skipped locally while the local-registry half still
+exercises the entire pipeline. Run one workflow at a time — `act` executes every workflow matching
+the event otherwise:
+
+```bash
+docker stop registry                                # frees :5000 for the services: container
+act push -W .github/workflows/ci-day6.yml
+```
 
 ---
 
