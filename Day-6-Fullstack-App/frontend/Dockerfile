@@ -22,7 +22,27 @@ COPY . .
 RUN npm run build
 
 # ---- Stage 2: serve it ----
-FROM nginx:1.27-alpine
+#
+# BASE IMAGE AGE IS A SECURITY PROPERTY. This started as nginx:1.27-alpine,
+# which Trivy scored at 37 HIGH/CRITICAL findings — including 2 CRITICALs in
+# openssl (CVE-2026-31789, libcrypto3/libssl3 3.3.3-r0). None of them were
+# nginx bugs; 1.27 is simply built on Alpine 3.21.3, and that base has aged.
+#
+# Measured across the candidate tags:
+#   nginx:1.27-alpine   alpine 3.21.3   37  (35 HIGH, 2 CRITICAL)
+#   nginx:1.29-alpine   alpine 3.23.4   13  (13 HIGH, 0 CRITICAL)
+#   nginx:1.30-alpine   alpine 3.24.1    0
+#   nginx:alpine        alpine 3.24.1    0   (mainline 1.31.x, floating tag)
+#
+# 1.30 is the stable branch, on the same Alpine 3.24.1 as node:22-alpine, and
+# clean. Pinned to the MINOR rather than a floating tag, matching node:22-alpine
+# and postgres:16-alpine — reproducible builds still matter.
+#
+# But note what just happened: the 1.27 pin was equally deliberate, and it
+# rotted. A pin does not stop CVEs being discovered, it only stops you finding
+# out. THE SCANNER IS THE PROCESS THAT TELLS YOU WHEN TO BUMP — which is the
+# whole argument for having it in the pipeline rather than pinning and hoping.
+FROM nginx:1.30-alpine
 
 # The static bundle, into nginx's default document root.
 COPY --from=builder /app/dist /usr/share/nginx/html

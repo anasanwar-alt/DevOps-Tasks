@@ -26,7 +26,7 @@ Follow-up tasks, assigned mid-exercise:
 |---|---|
 | Custom networks; frontend has no route to the database | ✅ see §7.5 |
 | `json-file` log rotation, `max-size` and `max-file`, on every service | ✅ see §7.6 |
-| Trivy scan between build and push, failing on any CRITICAL | ✅ see §8.6 |
+| Trivy scan between build and push, failing on any CRITICAL | ✅ see §8.5 |
 
 ---
 
@@ -220,7 +220,7 @@ Two Dockerfiles, one per service, both multi-stage.
 | Image | Builder stage | Runtime stage | Final size |
 |---|---|---|---|
 | `day6-backend` | `node:22` (**1.13 GB**) | `node:22-alpine` + prod deps | **167 MB** |
-| `day6-frontend` | `node:22-alpine` (163 MB) + ~200 MB of `node_modules` | `nginx:1.27-alpine` + 199 kB of static files | **48.4 MB** |
+| `day6-frontend` | `node:22-alpine` (163 MB) + ~200 MB of `node_modules` | `nginx:1.30-alpine` + 199 kB of static files | **62.5 MB** |
 
 ### 6.1 The frontend runtime image contains no Node at all
 
@@ -229,7 +229,7 @@ This is the point worth taking from Day 6, and it goes further than Days 3–5 d
 A React app is not a running program. `npm run build` turns it into plain HTML, CSS and JavaScript.
 Those files need a *web server*, not a JavaScript runtime — the JavaScript runs in the visitor's
 browser. So the builder stage installs Vite, React and ESLint, produces `dist/`, and is then
-discarded in full. The final image is `nginx:1.27-alpine` plus 199 kB of assets: **48.4 MB**, versus
+discarded in full. The final image is `nginx:1.30-alpine` plus 199 kB of assets: **62.5 MB**, versus
 a builder stage well over 350 MB.
 
 The backend's split is less dramatic but the same idea: the builder is full `node:22` (1.13 GB, it
@@ -469,7 +469,83 @@ the package, and what makes the package page show its source.
 > publicly visible until its visibility is changed under Package settings. A 404 when pulling
 > anonymously means private, not missing.
 
-### 8.5 Running it locally with `act`
+### 8.5 Vulnerability scanning: the gate between build and push
+
+Trivy runs **after the images are built and before either push**. That position is the entire point:
+Trivy inspects the image sitting in the runner's local Docker daemon, no registry involved, so
+nothing unscanned is ever published anywhere. A scan that runs after a push is a report, not a gate —
+the bad artifact is already out.
+
+Two passes per image, because the brief asks for two different things:
+
+| Pass | Flags | Purpose |
+|---|---|---|
+| report | `--severity HIGH,CRITICAL --exit-code 0` | prints a table so a developer can see *what* is there and *why* the next step failed |
+| gate | `--severity CRITICAL --exit-code 1` | fails the step, and therefore the job, before any push runs |
+
+HIGH appears in the report precisely *because* it is not in the gate — otherwise those findings
+would be invisible.
+
+**What the scan actually found, and why it was worth running before writing the workflow.** Both
+images failed on first scan. Neither failure was in application code:
+
+| Image | Findings | Root cause |
+|---|---|---|
+| `day6-backend` | 1 CRITICAL, 5 HIGH | **npm's own bundled dependencies**, shipped inside `node:22-alpine` |
+| `day6-frontend` | 2 CRITICAL, 35 HIGH | **`nginx:1.27-alpine` is built on Alpine 3.21.3**, which has aged |
+
+The backend result is the more instructive one. Every finding sat under
+`usr/local/lib/node_modules/npm/` — `tar` (CVE-2026-59873, CRITICAL), `brace-expansion`, `picomatch`,
+`sigstore`. The application's own tree, `app/node_modules/**`, was entirely clean.
+
+> **`npm audit` and Trivy are not substitutes for each other.** The CI log shows `npm ci --omit=dev`
+> reporting *"found 0 vulnerabilities"* across 81 production packages — and it was correct. `npm
+> audit` reads **your** dependency tree; Trivy reads **the whole image**, including tooling that the
+> base image shipped and that npm bundles inside itself. A build-time check and an artifact check see
+> different things.
+
+The fix was to delete npm from the runtime stage rather than suppress the finding. Nothing at runtime
+needs it: `CMD ["node", "dist/server.js"]` never invokes npm and the healthcheck is `node -e`.
+
+> **Deleting npm removed the vulnerability but not the bytes: 167 MB → 166.86 MB.** npm arrives in
+> the `node:22-alpine` *base layer*, and layers are additive and immutable — a `rm -rf` in a later
+> layer writes "whiteout" entries that hide those paths, it cannot reclaim storage beneath it. The
+> files still ship inside the base layer blob. What changed is the **flattened filesystem**: that is
+> what a running container sees, so nothing can execute npm, and it is what Trivy scans, so the
+> CRITICAL is genuinely gone. Actually removing the bytes needs a base that never had npm —
+> distroless, or copying just the node binary into a scratch stage.
+
+For the frontend, the fix was a base-image bump, chosen by measuring candidates rather than guessing:
+
+| Tag | Alpine | HIGH + CRITICAL |
+|---|---|---|
+| `nginx:1.27-alpine` (original) | 3.21.3 | 37 (35 HIGH, 2 CRITICAL) |
+| `nginx:1.29-alpine` | 3.23.4 | 13 (13 HIGH, 0 CRITICAL) |
+| **`nginx:1.30-alpine`** (chosen) | **3.24.1** | **0** |
+| `nginx:alpine` (floating, 1.31.x) | 3.24.1 | 0 |
+
+`1.29` would have passed a CRITICAL-only gate while still shipping 13 known HIGHs — a bad trade when
+a clean option costs nothing. `1.30-alpine` is the stable branch, on the same Alpine 3.24.1 as
+`node:22-alpine`, pinned to a minor to match `node:22-alpine` and `postgres:16-alpine` rather than
+floating.
+
+The cost is honest: the frontend image went **48.4 MB → 62.5 MB**. Fourteen megabytes for 37 fewer
+known vulnerabilities.
+
+> **The `1.27` pin was deliberate too, and it rotted.** Pinning does not prevent CVEs from being
+> discovered against what you pinned — it only prevents you from finding out. That is the actual
+> argument for a scanner in the pipeline: **the scanner is the process that tells you when to bump.**
+
+One judgement call, recorded rather than hidden: `CVE-2026-31789` is a heap overflow *on 32-bit
+systems*, and these images run on amd64 — so it was arguably not exploitable here. A severity gate
+does not know your architecture. The options were to bump the base (a real fix, available, cheap) or
+to file a documented exception; the bump won. `--ignore-unfixed` is deliberately **not** used: it is
+the common real-world softening for CVEs with no patch, and it would have hidden nothing here, since
+every finding had a published fix.
+
+Final state: **both images scan clean at HIGH and CRITICAL.**
+
+### 8.6 Running it locally with `act`
 
 The GHCR login, push and verify steps carry `if: ${{ !env.ACT }}`. `act` sets `ACT=true`, and it has
 no GHCR credentials, so those steps are skipped locally while the local-registry half still
@@ -524,7 +600,23 @@ act push -W .github/workflows/ci-day6.yml
     writes a new row version at the end of the table and marks the old one dead, so the updated row
     physically moved. `GET /api/tasks` is immune because it says `ORDER BY id DESC` explicitly.
     Captured in `evidence/04-api-crud.txt` §7.
-12. **The local `npm install` is not redundant with the container build.** It generates the
+12. **A build-time audit and an artifact scan see different things.** `npm audit` reported "0
+    vulnerabilities" on the backend's 81 production packages while Trivy found a CRITICAL in the same
+    image — because the CVE was in `tar`, bundled inside npm itself, inside the base image. Neither
+    tool was wrong; they scan different scopes. Running only the one your language ecosystem ships
+    with leaves the base image entirely unexamined.
+13. **Deleting files from a base layer removes the vulnerability, not the bytes.** Removing npm took
+    the backend from 1 CRITICAL + 5 HIGH to zero, and from 167 MB to 166.86 MB. Layers are additive
+    and immutable, so a `rm -rf` writes whiteout entries rather than reclaiming storage. What changes
+    is the flattened filesystem — which is what both a running container and a scanner see.
+14. **Pinning a base image does not stop CVEs, it stops you hearing about them.** `nginx:1.27-alpine`
+    was a deliberate pin and accumulated 37 HIGH/CRITICAL findings — none of them nginx bugs, all of
+    them Alpine 3.21.3 ageing underneath it. The scanner is what converts a stale pin from an unknown
+    into a work item.
+15. **A severity gate does not know your architecture.** `CVE-2026-31789` is a 32-bit-only heap
+    overflow and these images run on amd64. The honest choices are to fix it anyway or to file a
+    documented exception — not to quietly widen the gate until it passes.
+16. **The local `npm install` is not redundant with the container build.** It generates the
     `package-lock.json` that `npm ci` requires and that has to be committed; and it turns a
     43-second failed `docker build` into a 3-second `tsc` error. The Dockerfile is for shipping, not
     for developing.
@@ -544,6 +636,7 @@ act push -W .github/workflows/ci-day6.yml
 | `evidence/07-registry-contents.txt` | `/v2/_catalog` and per-repository tag lists showing both images |
 | `evidence/08-network-isolation.txt` | the same `wget` from the frontend before and after segmentation, network membership, and the backend still reachable |
 | `evidence/09-log-rotation.txt` | resolved `compose config` and `docker inspect` log config for all three containers |
+| `evidence/10-trivy-scan.txt` | Trivy HIGH/CRITICAL scans of both images, the base-image comparison table, and the CRITICAL gate exiting 0 |
 
 Regenerate everything with `bash capture-evidence.sh` from this directory.
 

@@ -9,6 +9,10 @@
 #   lint-and-test  — "is this code acceptable?"  Cheap, runs on Node directly.
 #   build-and-push — "package and publish it."   Only worth doing if the above passed.
 #
+# Inside build-and-push the order is: build -> SCAN -> push. The scan sits
+# between them so that nothing unscanned is ever published; see the security
+# gate section below.
+#
 # PUBLISHING TARGETS — both, from one build:
 #   localhost:5000  the task's requirement. Ephemeral: the `services:` registry
 #                   is created and destroyed with the job, so it proves the
@@ -150,6 +154,8 @@ jobs:
             echo "owner=${OWNER}"
             echo "repo=${REPO}"
             echo "sha_tag=${SHA_TAG}"
+            # Used as the Trivy DB cache key, so the database refreshes daily.
+            echo "date=$(date -u +%Y-%m-%d)"
           } >> "$GITHUB_OUTPUT"
           echo "local : ${REGISTRY}/day6-<service>:${SHA_TAG}"
           echo "ghcr  : ${GHCR}/${OWNER}/${REPO}/day6-<service>:${SHA_TAG}"
@@ -191,6 +197,77 @@ jobs:
               "${APP_DIR}/${svc}"
             echo "::endgroup::"
           done
+
+      # =======================================================================
+      # SECURITY GATE — after build, before ANY push.
+      #
+      # The position is the whole point. Trivy inspects the image sitting in the
+      # runner's local Docker daemon; no registry is involved. Putting it here
+      # means nothing unscanned is ever published to anywhere. A scan that runs
+      # after the push is a report, not a gate — the bad artifact is already out.
+      # =======================================================================
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@v0.2.3
+
+      # The vulnerability database is ~100 MB pulled from GHCR, and GHCR
+      # rate-limits. Caching it keyed on the date means one download per day
+      # rather than one per run, while still staying current.
+      - name: Cache the Trivy vulnerability database
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/trivy-cache
+          key: trivy-db-${{ steps.meta.outputs.date }}
+          restore-keys: trivy-db-
+
+      # TWO passes per image, deliberately, because the task asks for two
+      # different things.
+      #
+      # Pass 1 REPORTS. --severity HIGH,CRITICAL with --exit-code 0 always
+      # succeeds; its job is to put a readable table in the log so a developer
+      # can see what is present and why the next step failed. HIGH is included
+      # here precisely because it is NOT included in the gate — otherwise those
+      # findings would be invisible.
+      - name: Scan both images (report)
+        env:
+          SHA_TAG: ${{ steps.meta.outputs.sha_tag }}
+        run: |
+          set -euo pipefail
+          for svc in backend frontend; do
+            echo "::group::trivy report — day6-${svc}"
+            trivy image \
+              --scanners vuln \
+              --severity HIGH,CRITICAL \
+              --exit-code 0 \
+              --format table \
+              --cache-dir "${RUNNER_TEMP}/trivy-cache" \
+              "${REGISTRY}/day6-${svc}:${SHA_TAG}"
+            echo "::endgroup::"
+          done
+
+      # Pass 2 GATES. --exit-code 1 makes a non-empty result fail the step, and
+      # a failed step fails the job before either push runs.
+      #
+      # Note what is NOT here: --ignore-unfixed. That flag is the common
+      # real-world softening — it hides CVEs with no available patch, which are
+      # arguably unactionable. It is omitted because the brief says fail on ANY
+      # critical, and because it would have hidden nothing anyway: every finding
+      # this gate caught during development had a published fix.
+      - name: Fail on any CRITICAL vulnerability
+        env:
+          SHA_TAG: ${{ steps.meta.outputs.sha_tag }}
+        run: |
+          set -euo pipefail
+          for svc in backend frontend; do
+            echo "Gating day6-${svc} on CRITICAL severity..."
+            trivy image \
+              --scanners vuln \
+              --severity CRITICAL \
+              --exit-code 1 \
+              --format table \
+              --cache-dir "${RUNNER_TEMP}/trivy-cache" \
+              "${REGISTRY}/day6-${svc}:${SHA_TAG}"
+          done
+          echo "No CRITICAL vulnerabilities in either image — safe to publish."
 
       # The task's actual requirement.
       #
