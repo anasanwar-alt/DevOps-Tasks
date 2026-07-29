@@ -1,0 +1,238 @@
+TASK 1 - network segmentation
+
+$ docker network inspect day6_frontend_net --format 'frontend_net: {{range .Containers}}{{.Name}} {{end}}'
+frontend_net: day6-backend-1 day6-frontend-1 
+
+$ docker network inspect day6_backend_net  --format 'backend_net : {{range .Containers}}{{.Name}} {{end}}'
+backend_net : day6-db-1 day6-backend-1 
+
+# day6-db-1 and day6-frontend-1 never appear on the same network
+
+$ docker exec day6-frontend-1 wget -T 3 -qO- http://db:5432
+wget: bad address 'db:5432'
+# 'bad address' is a DNS failure - it happens before any packet is sent.
+# Docker's embedded DNS only answers for containers sharing a network.
+
+$ docker exec day6-frontend-1 wget -T 3 -qO- http://backend:3000/health
+ok
+# ...but the backend still answers. Segmented, not broken - which is
+# what distinguishes this from simply having misconfigured the network.
+
+
+
+
+TASK 2 - log rotation
+
+$ docker inspect --format 'day6-db-1: {{json .HostConfig.LogConfig}}' day6-db-1
+day6-db-1: {"Type":"json-file","Config":{"max-file":"3","max-size":"10m"}}
+
+$ docker inspect --format 'day6-backend-1: {{json .HostConfig.LogConfig}}' day6-backend-1
+day6-backend-1: {"Type":"json-file","Config":{"max-file":"3","max-size":"10m"}}
+
+$ docker inspect --format 'day6-frontend-1: {{json .HostConfig.LogConfig}}' day6-frontend-1
+day6-frontend-1: {"Type":"json-file","Config":{"max-file":"3","max-size":"10m"}}
+
+
+
+
+TASK 3 - CRITICAL vulnerability gate
+
+$ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache/trivy aquasec/trivy:0.72.0 image --scanners vuln --severity CRITICAL --exit-code 1 --quiet day6-backend:latest
+
+Report Summary
+
+┌─────────────────────────────────────────────────────────────────────┬──────────┬─────────────────┐
+│                               Target                                │   Type   │ Vulnerabilities │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ day6-backend:latest (alpine 3.24.1)                                 │  alpine  │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/accepts/package.json                               │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/body-parser/node_modules/content-type/package.json │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/body-parser/package.json                           │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/bytes/package.json                                 │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/call-bind-apply-helpers/package.json               │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/call-bound/package.json                            │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/content-disposition/package.json                   │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/content-type/package.json                          │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/cookie-signature/package.json                      │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/cookie/package.json                                │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/debug/package.json                                 │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/depd/package.json                                  │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/dunder-proto/package.json                          │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/ee-first/package.json                              │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/encodeurl/package.json                             │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/es-define-property/package.json                    │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/es-errors/package.json                             │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/es-object-atoms/package.json                       │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/escape-html/package.json                           │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/etag/package.json                                  │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/express/package.json                               │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/finalhandler/package.json                          │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/forwarded/package.json                             │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/fresh/package.json                                 │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/function-bind/package.json                         │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/get-intrinsic/package.json                         │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/get-proto/package.json                             │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/gopd/package.json                                  │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/has-symbols/package.json                           │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/hasown/package.json                                │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/http-errors/package.json                           │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/iconv-lite/package.json                            │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/inherits/package.json                              │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/ipaddr.js/package.json                             │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/is-promise/package.json                            │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/math-intrinsics/package.json                       │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/media-typer/package.json                           │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/merge-descriptors/package.json                     │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/mime-db/package.json                               │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/mime-types/package.json                            │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/ms/package.json                                    │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/negotiator/package.json                            │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/object-inspect/package.json                        │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/on-finished/package.json                           │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/once/package.json                                  │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/parseurl/package.json                              │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/path-to-regexp/package.json                        │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/pg-cloudflare/package.json                         │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/pg-connection-string/package.json                  │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/pg-int8/package.json                               │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/pg-pool/package.json                               │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/pg-protocol/package.json                           │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/pg-types/package.json                              │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/pg/package.json                                    │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/pgpass/package.json                                │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/postgres-array/package.json                        │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/postgres-bytea/package.json                        │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/postgres-date/package.json                         │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/postgres-interval/package.json                     │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/proxy-addr/package.json                            │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/qs/package.json                                    │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/range-parser/package.json                          │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/raw-body/package.json                              │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/router/package.json                                │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/safer-buffer/package.json                          │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/send/package.json                                  │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/serve-static/package.json                          │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/setprototypeof/package.json                        │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/side-channel-list/package.json                     │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/side-channel-map/package.json                      │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/side-channel-weakmap/package.json                  │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/side-channel/package.json                          │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/split2/package.json                                │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/statuses/package.json                              │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/toidentifier/package.json                          │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/type-is/node_modules/content-type/package.json     │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/type-is/package.json                               │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/unpipe/package.json                                │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/vary/package.json                                  │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/wrappy/package.json                                │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/xtend/package.json                                 │ node-pkg │        0        │
+├─────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/package.json                                                    │ node-pkg │        0        │
+└─────────────────────────────────────────────────────────────────────┴──────────┴─────────────────┘
+Legend:
+- '-': Not scanned
+- '0': Clean (no security findings detected)
+
+# exit code: 0   (0 = no CRITICAL = pipeline proceeds to push)
+
+$ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache/trivy aquasec/trivy:0.72.0 image --scanners vuln --severity CRITICAL --exit-code 1 --quiet day6-frontend:latest
+
+Report Summary
+
+┌──────────────────────────────────────┬────────┬─────────────────┐
+│                Target                │  Type  │ Vulnerabilities │
+├──────────────────────────────────────┼────────┼─────────────────┤
+│ day6-frontend:latest (alpine 3.24.1) │ alpine │        0        │
+└──────────────────────────────────────┴────────┴─────────────────┘
+Legend:
+- '-': Not scanned
+- '0': Clean (no security findings detected)
+
+# exit code: 0   (0 = no CRITICAL = pipeline proceeds to push)
+
+# In CI this runs BETWEEN build and push, so nothing unscanned is ever
+# published. Both images failed their first scan and were fixed, not
+# suppressed: npm removed from the backend runtime stage (CVE-2026-59873,
+# CRITICAL, in npm's own bundled tar), and nginx:1.27-alpine bumped to
+# 1.30-alpine (Alpine 3.21.3 -> 3.24.1) for the frontend's 2 CRITICALs.
