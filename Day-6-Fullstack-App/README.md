@@ -20,6 +20,14 @@
 | CI/CD: lint + test, build both images, push to local registry on commit | ✅ see §8 |
 | README: architecture, setup, run from a clean clone | ✅ §2 and §3 |
 
+Follow-up tasks, assigned mid-exercise:
+
+| Task item | Status |
+|---|---|
+| Custom networks; frontend has no route to the database | ✅ see §7.5 |
+| `json-file` log rotation, `max-size` and `max-file`, on every service | ✅ see §7.6 |
+| Trivy scan between build and push, failing on any CRITICAL | ✅ see §8.6 |
+
 ---
 
 ## 1. Environment
@@ -49,7 +57,7 @@
                           │   location /api/  → proxy_pass ──────┐   │
                           └──────────────────────────────────────│───┘
                                                                  │
-                                     compose network "day6_default"
+                          ═══════════ day6_frontend_net ═════════│═══
                                                                  │
                           ┌──────────────────────────────────────▼───┐
    host :3000  ───────────┤ backend                                  │
@@ -58,6 +66,8 @@
                           │   GET /health                            │
                           └──────────────────┬───────────────────────┘
                                              │ PGHOST=db
+                          ═══════════ day6_backend_net ══════│═══════
+                                             │
                           ┌──────────────────▼───────────────────────┐
                           │ db                                       │
                           │   postgres:16-alpine                     │
@@ -295,6 +305,84 @@ in `evidence/05-volume-persistence.txt`:
 Note that the second case does not crash the backend: `initDb()` runs
 `CREATE TABLE IF NOT EXISTS` against the brand-new database and carries on.
 
+### 7.5 Network segmentation
+
+Two user-defined bridges rather than one, so the tiers are separated at the network layer instead of
+by convention:
+
+| Service | Networks | Can reach |
+|---|---|---|
+| `frontend` | `frontend_net` | `backend` only |
+| `backend` | `frontend_net`, `backend_net` | both tiers — it *is* the bridge |
+| `db` | `backend_net` | `backend` only |
+
+There is no network path from the frontend to the database. Traffic between those tiers has to pass
+through the backend process, because no route around it exists.
+
+> **The brief's premise needs one correction.** It states the containers "likely share the default
+> Docker bridge network". They did not — Compose had created `day6_default`, a *user-defined* bridge.
+> That distinction is load-bearing rather than pedantic: user-defined bridges provide automatic DNS
+> between containers, which is the only reason `PGHOST: db` and `proxy_pass http://backend:3000` ever
+> resolved. Docker's actual `bridge` network has no DNS; the whole project would have been on raw IPs.
+
+> **The trap: declaring `networks:` on a service stops it joining `default`.** Every service must
+> then list its networks explicitly. Miss one and the symptom is not a runtime proxy error — nginx
+> resolves `backend` at startup and simply fails to start.
+
+**Isolation is enforced by DNS, not by a firewall.** The same command, before and after, fails for
+completely different reasons:
+
+```
+before:  $ docker compose exec frontend wget -T 3 -qO- http://db:5432
+         wget: error getting response: Resource temporarily unavailable
+after:   $ docker compose exec frontend wget -T 3 -qO- http://db:5432
+         wget: bad address 'db:5432'
+```
+
+The "before" line is the important one. It is not a connection failure — DNS resolved, the TCP
+connection to 5432 *succeeded*, and wget only gave up because Postgres does not speak HTTP. The
+route was fully working. Afterwards the name does not resolve at all, because Docker's embedded DNS
+only answers for containers sharing a network. Captured in `evidence/08-network-isolation.txt`.
+
+The proof is deliberately two-sided: `db` unreachable **and** `backend:3000/health` still returning
+`ok` from that same container. One alone would not distinguish segmentation from breakage.
+
+Worth being honest about the value: nginx never had any reason to reach Postgres, so this removes a
+*capability*, not an intent. It matters because capabilities are what get abused after a compromise.
+The available next step, not taken here because it is beyond the brief, is `internal: true` on
+`backend_net`, which additionally severs the database's outbound access to the internet.
+
+### 7.6 Log rotation
+
+Docker's default `json-file` driver has **no size limit**. A container in a restart loop, or simply
+one that logs every request, grows its log file until the host disk is full — and a full disk takes
+down every container on the box, not just the noisy one. Nothing rotates unless told to.
+
+The policy is declared once as a YAML anchor and referenced by all three services, so it cannot
+drift between them:
+
+```yaml
+x-logging: &default-logging          # x- keys are compose extension fields:
+  driver: json-file                  # ignored by compose, valid YAML anchors
+  options:
+    max-size: "10m"
+    max-file: "3"
+```
+
+That sets an explicit ceiling: `max-size × max-file × services` = 10m × 3 × 3 = **90 MB**, hard
+bound. Verified per container rather than assumed:
+
+```
+$ docker inspect --format '{{json .HostConfig.LogConfig}}' day6-backend-1
+{"Type":"json-file","Config":{"max-file":"3","max-size":"10m"}}
+```
+
+> **This needs container recreation, not a restart.** Log configuration and network attachment are
+> both fixed when a container is *created*. `docker compose restart` would leave both exactly as they
+> were. Use `docker compose down && docker compose up -d` — `down` also removes the now-orphaned
+> `day6_default` network, which `up` alone never would, since `up` creates networks but never
+> deletes them.
+
 ---
 
 ## 8. CI/CD
@@ -454,6 +542,8 @@ act push -W .github/workflows/ci-day6.yml
 | `evidence/05-volume-persistence.txt` | `down` → `up` (data survives) vs `down -v` → `up` (data gone) |
 | `evidence/06-ci-act-run.txt` | complete `act push` run: gate, then both images built and pushed |
 | `evidence/07-registry-contents.txt` | `/v2/_catalog` and per-repository tag lists showing both images |
+| `evidence/08-network-isolation.txt` | the same `wget` from the frontend before and after segmentation, network membership, and the backend still reachable |
+| `evidence/09-log-rotation.txt` | resolved `compose config` and `docker inspect` log config for all three containers |
 
 Regenerate everything with `bash capture-evidence.sh` from this directory.
 

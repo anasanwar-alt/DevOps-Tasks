@@ -1,13 +1,35 @@
 # Day 6 — the whole stack in one file.
 #
-# Three services on one private network created by compose. The ONLY thing the
-# outside world can reach is the frontend on :8080; everything else talks over
-# service names (frontend -> backend -> db) that compose's built-in DNS resolves.
+# Three services, TWO networks. The only thing the outside world can reach is
+# the frontend on :8080; everything else talks over service names that compose's
+# built-in DNS resolves.
 #
 #   browser --> :8080 frontend(nginx) --> backend:3000(express) --> db:5432(postgres)
+#                     [frontend_net]     [frontend_net+backend_net]  [backend_net]
 #
-# The structure is Day 4's, extended from two services to three.
+# The structure is Day 4's, extended from two services to three, then segmented.
 name: day6
+
+# --- Shared log rotation policy ---------------------------------------------
+# `x-` prefixed top-level keys are compose EXTENSION FIELDS: compose ignores them
+# but YAML still parses them, which makes them a legal place to hang an anchor.
+# `&default-logging` defines the anchor; `*default-logging` below references it.
+#
+# Written once so the policy is provably identical on all three services rather
+# than three copies that can drift.
+#
+# WHY THIS MATTERS: the default json-file driver has NO size limit. A container
+# in a restart loop, or one logging every request, will grow its log file until
+# the host's disk is full — and a full disk takes down every container on the
+# box, not just the noisy one. Docker never rotates unless told to.
+#
+# The ceiling this sets is explicit: max-size x max-file x services
+#                                    = 10m x 3 x 3 = 90 MB, hard bound.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m" # rotate once the active log file reaches 10 MB
+    max-file: "3" # keep 3 rotated files, then discard the oldest
 
 services:
   # ---- PostgreSQL database ----
@@ -22,6 +44,10 @@ services:
       # This is the "volume for DB persistence" the task asks for. Proof that it
       # works is `down` then `up` (data stays) vs `down -v` then `up` (data gone).
       - pgdata:/var/lib/postgresql/data
+    networks:
+      # backend_net ONLY. The frontend is not on this network, so it has no
+      # route to the database and cannot even resolve the name `db`.
+      - backend_net
     healthcheck:
       # pg_isready ships with the postgres image. $$ escapes compose
       # interpolation so the shell INSIDE the container expands its own env vars.
@@ -31,6 +57,7 @@ services:
       retries: 5
       start_period: 5s
     restart: unless-stopped
+    logging: *default-logging
 
   # ---- Express REST API ----
   backend:
@@ -48,6 +75,12 @@ services:
       # NOT use this — it reaches the backend over the internal network. Delete
       # this block and the app still works end to end.
       - "3000:3000"
+    networks:
+      # The ONLY service on both networks — it is the bridge between the tiers.
+      # Traffic from the frontend to the database has to pass through this
+      # process; there is no network path around it.
+      - frontend_net
+      - backend_net
     depends_on:
       db:
         # Start the backend only once the DB reports healthy, not merely started.
@@ -64,12 +97,16 @@ services:
       retries: 5
       start_period: 10s
     restart: unless-stopped
+    logging: *default-logging
 
   # ---- React bundle served by nginx, which also proxies /api ----
   frontend:
     build: ./frontend
     ports:
       - "8080:80"
+    networks:
+      # frontend_net ONLY. It can reach `backend`, and nothing else.
+      - frontend_net
     depends_on:
       backend:
         # NOT optional here. nginx resolves the literal hostname in
@@ -84,6 +121,27 @@ services:
       retries: 5
       start_period: 5s
     restart: unless-stopped
+    logging: *default-logging
+
+# --- Networks ----------------------------------------------------------------
+# Two user-defined bridges, so the tiers are separated at the network layer
+# rather than by convention.
+#
+# NOTE ON THE STARTING POINT: before this change the services were NOT on
+# Docker's `bridge` network. Compose had created `day6_default`, a USER-DEFINED
+# bridge. That distinction is load-bearing — user-defined bridges provide
+# automatic DNS between containers, which is the only reason `PGHOST: db` and
+# `proxy_pass http://backend:3000` ever resolved. Docker's actual default
+# `bridge` network has no DNS at all; you would be on raw IP addresses.
+#
+# THE TRAP: once a service declares `networks:`, it NO LONGER joins `default`
+# automatically. Every service must list its networks explicitly. Miss one and
+# the symptom is not a proxy error at request time — nginx fails to start.
+networks:
+  frontend_net:
+    driver: bridge
+  backend_net:
+    driver: bridge
 
 volumes:
   pgdata:
