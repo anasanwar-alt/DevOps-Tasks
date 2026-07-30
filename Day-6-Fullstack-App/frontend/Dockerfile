@@ -42,7 +42,7 @@ RUN npm run build
 # rotted. A pin does not stop CVEs being discovered, it only stops you finding
 # out. THE SCANNER IS THE PROCESS THAT TELLS YOU WHEN TO BUMP — which is the
 # whole argument for having it in the pipeline rather than pinning and hoping.
-FROM nginx:1.30-alpine
+FROM nginx:1.27-alpine
 
 # The static bundle, into nginx's default document root.
 COPY --from=builder /app/dist /usr/share/nginx/html
