@@ -227,34 +227,6 @@ jobs:
           key: trivy-db-${{ steps.meta.outputs.date }}
           restore-keys: trivy-db-
 
-      # TWO passes per image, deliberately, because the task asks for two
-      # different things.
-      #
-      # Pass 1 REPORTS. --severity HIGH,CRITICAL with --exit-code 0 always
-      # succeeds; its job is to put a readable table in the log so a developer
-      # can see what is present and why the next step failed. HIGH is included
-      # here precisely because it is NOT included in the gate — otherwise those
-      # findings would be invisible.
-      - name: Scan both images (report)
-        env:
-          SHA_TAG: ${{ steps.meta.outputs.sha_tag }}
-        run: |
-          set -euo pipefail
-          mkdir -p "${RUNNER_TEMP}/trivy-cache"
-          for svc in backend frontend; do
-            echo "::group::trivy report — day6-${svc}"
-            docker run --rm \
-              -v /var/run/docker.sock:/var/run/docker.sock \
-              -v "${RUNNER_TEMP}/trivy-cache:/root/.cache/trivy" \
-              aquasec/trivy:0.72.0 image \
-              --scanners vuln \
-              --severity HIGH,CRITICAL \
-              --exit-code 0 \
-              --format table \
-              "${REGISTRY}/day6-${svc}:${SHA_TAG}"
-            echo "::endgroup::"
-          done
-
       # Pass 2 GATES. --exit-code 1 makes a non-empty result fail the step, and
       # a failed step fails the job before either push runs.
       #
@@ -268,6 +240,7 @@ jobs:
           SHA_TAG: ${{ steps.meta.outputs.sha_tag }}
         run: |
           set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/trivy-cache"
           for svc in backend frontend; do
             echo "Gating day6-${svc} on CRITICAL severity..."
             docker run --rm \
